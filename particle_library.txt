@@ -1,0 +1,186 @@
+--@name particle_library
+--@author toakley682, BigPoop, Ax25
+--@shared
+
+if CLIENT then
+    
+    ParticleEngine = class( "ParticleEngine" )
+    
+    function ParticleEngine:initialize( Count )
+        
+        if not Count then error( "No particle maximum given" ) end
+        
+        self.Count = Count
+        
+        self.ThreeD = false
+        self.ConsoleDebug = false
+        
+        self.ServerTPS = math.ceil( 1 / game.getTickInterval() )
+        
+        self.Emitters = {}
+        self.Particles = {}
+        self.Emissions = {}
+        
+        self.ParticleIndex = 1
+        
+        self.TickThread = nil
+        
+        self.ParticleStartSize = 3
+        self.ParticleEndSize = 3
+        
+        self.ParticleStartAlpha = 255
+        self.ParticleEndAlpha = 255
+        
+        self.ParticleStartLength = 0
+        self.ParticleEndLength = 0
+        
+        self.ParticleLifetime = 1
+        
+        self.MaximumEmitters = particle.particleEmittersLeft()
+        
+        self.DummyEmitter = particle.create( Vector(), self.ThreeD )
+        
+        self.MaximumParticlesPerEmitter = self.DummyEmitter:getParticlesLeft()
+        self.RequiredEmitters = math.ceil( self.Count / self.MaximumParticlesPerEmitter )
+        
+        if self.RequiredEmitters > self.MaximumEmitters then
+            
+            error( "Too many particles : Maximum allowed - '" .. ( self.MaximumEmitters * self.MaximumParticlesPerEmitter ) .. "'" )
+            
+        end
+        
+        self.EmissionRate = math.floor( self.MaximumParticlesPerEmitter / self.ServerTPS ) - 1
+        
+        self.DummyEmitter:destroy()
+        
+    end
+    
+    function ParticleEngine:Setup()
+        
+        for Index = 1, self.RequiredEmitters, 1 do
+            
+            self.Emitters[ Index ] = particle.create( Vector(), self.ThreeD )
+            
+        end
+        
+        if self.ConsoleDebug == true then
+            
+            printConsole( "'" .. table.count( self.Emitters ) .. "' particle emitters registered" )
+            
+        end
+        
+        self:ParticleTick()
+        
+    end
+    
+    function ParticleEngine:NewParticle( Callback )
+        
+        local Emitter = self.Emitters[ math.ceil( self.ParticleIndex / self.MaximumParticlesPerEmitter ) ]
+        if Emitter:getParticlesLeft() == 0 then return end
+        
+        local lifetime = 1
+        
+        if type(self.ParticleLifetime) == "function" then
+            lifetime = self.ParticleLifetime()
+        else
+            lifetime = self.ParticleLifetime
+        end
+        
+        self.Particles[ self.ParticleIndex ] = Emitter:add( self.ParticleMaterial, Vector(), self.ParticleStartSize, self.ParticleEndSize, self.ParticleStartLength, self.ParticleEndLength, self.ParticleStartAlpha, self.ParticleEndAlpha, lifetime )
+        local Particle = self.Particles[ self.ParticleIndex ]
+        
+        Particle.Lifetime = lifetime
+        Particle.CreationTime = timer.curtime()
+        
+        local Data = Callback( Particle )
+        Particle:setPos( Data.StartPosition )
+        
+        self.ParticleIndex = self.ParticleIndex + 1
+        if self.ParticleIndex > self.Count then
+            
+            self.ParticleIndex = 1
+            
+        end
+        
+    end
+    
+    function ParticleEngine:ParticleTick()
+        
+        hook.add( "think", "__ParticleEngine:" .. table.address( self ), function()
+            
+            if self.TickThread == nil then
+                
+                self.TickThread = coroutine.create( function()
+                    
+                    if not self.ParticleTickFunction then return end
+                    
+                    for Index, Particle in ipairs( self.Particles ) do
+                        
+                        if quotaAverage() > quotaMax() * 0.8 then coroutine.yield() end
+                        
+                        if not Particle then continue end
+                        
+                        self.ParticleTickFunction( Index, Particle )
+                        
+                    end
+                    
+                end)
+                
+            else
+                
+                if coroutine.status( self.TickThread ) == "suspended" and quotaAverage() < quotaMax() * 0.2 then
+                    coroutine.resume( self.TickThread )
+                end
+                
+                if coroutine.status( self.TickThread )=="dead" then
+                    self.TickThread = nil
+                end
+                
+            end
+                
+        end)
+        
+    end
+    
+    function ParticleEngine:Emission( Index, Callback, EmissionRate )
+        
+        if self.Emissions[ Index ] != nil then return end
+        
+        local TimerName = table.address( self ) .. ":ParticleEngineEmissionTick:" .. Index
+        
+        self.Emissions[ Index ] = TimerName
+        
+        timer.create( TimerName, game.getTickInterval(), 0, function()
+            
+            for I = 1, EmissionRate or self.EmissionRate do
+                
+                if quotaAverage() > quotaMax() * 0.6 then continue end
+                
+                self:NewParticle( Callback )
+                
+            end
+            
+        end)
+        
+    end
+    
+    function ParticleEngine:RemoveEmission( Index )
+        
+        if not self.Emissions[ Index ] then return end
+        
+        timer.remove( self.Emissions[ Index ] )
+        table.remove( self.Emissions, Index )
+        
+    end
+    
+    function ParticleEngine:Burst( BurstCount, Callback )
+        
+        for I = 1, BurstCount do
+            
+            self:NewParticle( Callback )
+            
+        end
+        
+    end
+    
+end

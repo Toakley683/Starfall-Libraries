@@ -1,0 +1,222 @@
+--@name projectile_library
+--@author toakley682
+--@shared
+--@include libs/toak_math_library.txt
+--@include https://raw.githubusercontent.com/Jacbo1/Public-Starfall/main/SafeNet/safeNet.lua as SafeNet
+
+require( "SafeNet" )
+require( "libs/toak_math_library.txt" )
+
+if CLIENT then
+    
+    local __Projectiles = {}
+    
+    function __GotProjectile( Entity )
+        
+        if not Entity then return end
+        if not Entity:isValid() then return end
+        
+        local Index = table.count( __Projectiles ) + 1
+        
+        hook.run( "OnNewProjectile", Entity, Index )
+        
+        __Projectiles[ Index ] = Entity
+        
+    end
+    
+    function __GotProjectileCollide( Index )
+        
+        hook.run( "OnProjectileCollide", Index )
+        table.remove( __Projectiles, Index )
+        
+    end
+    
+    hook.add( "think", "__ProjectileThinkHook", function()
+        
+        for Index, Projectile in ipairs( __Projectiles ) do
+            
+            if not Projectile then __GotProjectileCollide( Index ) return end
+            if not Projectile:isValid() then __GotProjectileCollide( Index ) return end
+            
+            hook.run( "ProjectileThink", Projectile )
+            
+        end
+        
+    end)
+    
+    safeNet.receive( "__NewProjectile", function()
+        
+        local Index = safeNet.readFloat()
+        
+        if entity( Index ):isValid() then
+            
+            __GotProjectile( entity( Index ) )
+            
+        end
+        
+        local HookName = ( math.random( 1000000000, 9999999999 ) .. "__EntityCreated" )
+        
+        local Missile = nil
+        
+        hook.add( "NetworkEntityCreated", HookName, function( E )
+            
+            if E:entIndex() == Index then
+                
+                __GotProjectile( E )
+                
+            end
+        
+            hook.remove( "NetworkEntityCreated", HookName )
+            
+        end)
+        
+    end)
+    
+else
+    
+    Projectile = class( "Projectile" )
+    
+    function Projectile:initialize( StartPosition, Angles, Model )
+        
+        if StartPosition == nil then error( "No position" ) end
+        if Angles == nil then error( "No angles" ) end
+        if OnCreate == nil then OnCreate = function() end end
+        
+        self.FlightCall = function() end
+        self.OnCreate = function() end
+        self.OnTick = function() end
+        self.OnCollision = function() end
+        
+        self.StartPosition = StartPosition
+        self.StartAngles = Angles
+        self.Model = Model
+        
+        if self.Model == nil then self.Model = "models/hunter/blocks/cube025x025x025.mdl" end
+        
+    end
+    
+    function Projectile:OnCollide()
+        
+        if not self.CollisionProp then return end
+        if not self.CollisionProp:isValid() then return end
+        
+        hook.remove( "tick", self.TickHookName )
+        
+        self.OnCollision( self.CollisionProp )
+        
+        try( function()
+            
+            self.CollisionProp:breakEnt()
+            self:Remove()
+            
+        end)
+        
+    end
+    
+    function Projectile:Remove()
+        
+        if self.TickHookName != nil then hook.remove( "tick", self.TickHookName ) end
+        table.empty( self )
+        
+    end
+    
+    function Projectile:Activate()
+        
+        try( function()
+            
+            self.CollisionProp = prop.create(
+                self.StartPosition,
+                self.StartAngles,
+                self.Model,
+                false
+            )
+            
+            self.CollisionProp:addCollisionListener(
+                function()
+                    
+                    if not self.CollisionProp then return end
+                    if not self.CollisionProp:isValid() then return end
+                    
+                    try( function()
+                        
+                        self.CollisionProp:removeCollisionListener()
+                        self:OnCollide()
+                        
+                    end)
+                    
+                end
+            )
+            
+            local Data = {}
+            
+            try( function()
+                
+                safeNet.start( "__NewProjectile" )
+                safeNet.writeFloat( self.CollisionProp:entIndex() )
+                safeNet.send()
+                
+            end)
+            
+            self.OnCreate( self.CollisionProp )
+            
+        end)
+        
+        if not self.CollisionProp then self:Remove() return end
+        if not self.CollisionProp:isValid() then self:Remove() return end
+        if not self.CollisionProp:isValidPhys() then self:Remove() return end
+        
+        self.PhysicsObject = self.CollisionProp:getPhysicsObject()
+        
+        self.CollisionProp:enableGravity( false )
+        
+        self.TickHookName = ( table.address( self ) .. ":TickHookName" )
+        
+        if not self.Force then self.Force = 1 end
+        
+        hook.add( "tick", self.TickHookName, function()
+            
+            if not self.CollisionProp then self:Remove() return end
+            if not self.CollisionProp:isValid() then self:Remove() return end
+            if not self.CollisionProp:isValidPhys() then self:Remove() return end
+            
+            if not self.PhysicsObject then self:Remove() return end
+            if not self.PhysicsObject:isValid() then self:Remove() return end
+            
+            try( function()
+                self.PhysicsObject:enableMotion( true )
+            end)
+            
+            local Data = {}
+            
+            Direction = self.FlightCall( self.CollisionProp, self.PhysicsObject, self )
+            
+            if type( Direction ) != "Vector" and Direction != nil then error( "Incorrect direction type : Must be Vector" ) end
+            if not Direction then Direction = self.CollisionProp:getForward() end
+            
+            local Quaternion = ( Direction:getAngle():getQuaternion() / self.CollisionProp:getAngles():getQuaternion() ):getRotationVector()
+            local Torque = self.CollisionProp:worldToLocalAxis( Quaternion )
+            local AngVel = self.CollisionProp:worldToLocalAxis( self.PhysicsObject:getAngleVelocity() )
+            
+            if not hasPermission( "entities.canTool", self.CollisionProp ) then return end
+            
+            self.PhysicsObject:setAngleVelocity( Torque * 250 * game.getTickInterval() )
+            
+            self.PhysicsObject:wake()
+            self.PhysicsObject:applyForceCenter( 
+                (
+                    (
+                        self.PhysicsObject:getAngles():getForward() *
+                        self.Force
+                    ) -
+                    self.PhysicsObject:getVelocity()
+                ) * self.PhysicsObject:getMass()
+            )
+            
+            if not self.OnTick then return end
+            self.OnTick( self.CollisionProp )
+            
+        end)
+        
+    end
+    
+end

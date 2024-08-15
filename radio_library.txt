@@ -1,0 +1,759 @@
+--@name radio_library
+--@author toakley682
+--@shared
+--@include https://raw.githubusercontent.com/Jacbo1/Public-Starfall/main/SafeNet/safeNet.lua as SafeNet
+local net = require("SafeNet")
+
+function DisplayNotice( Notice )
+    
+    printConsole( "RadioLibrary : " .. Notice )
+    
+end
+
+function DisplayError( Err, Desc )
+    
+    if not Err then return end
+    
+    if Desc then
+        
+        DisplayNotice( Err .. "' inside '" .. Desc .. "'" )
+        
+    else
+        
+        DisplayNotice( Err )
+        
+    end
+    
+end
+
+function AwaitUntil( Await, Callback, UID )
+    
+    local TimerName = "__AwaitUnitl:" .. UID
+    
+    if timer.exists( TimerName ) then timer.remove( TimerName ) end
+    
+    timer.create( TimerName, 0.1, 0, function()
+        
+        if Await() == false then return end
+        Callback()
+        timer.remove( TimerName )
+        
+    end)
+    
+end
+
+if CLIENT then
+    
+    RadioStation = class( "RadioStation" )
+    RadioClient = class( "RadioClient" )
+    
+    function RadioStation:initialize()
+        
+        self.Station = player()
+        self.SongList = {}
+        
+        safeNet.start( "__RequestStationPermission" )
+        safeNet.send()
+        
+        self:AwaitJSONRequest()
+        self:AwaitSongRequest()
+        
+    end
+    
+    function RadioStation:AwaitSongRequest()
+        
+        safeNet.receive( "__ObtainSongURL", function()
+            
+            if table.count( self.SongList ) <= 0 then return end
+            
+            local Index = safeNet.readInt( 32 )
+            
+            DisplayNotice( "Song at index '" .. Index .. "' requested from station" )
+            
+            if self.SongList[ Index ] == nil then
+                
+                DisplayError( "Song at index '" .. Index .. "' belongs to nil", 'safeNet.receive( "__ObtainSongURL" )' )
+                return
+                
+            end
+            
+            local FileName = 
+            string.replace( 
+                string.getFileFromFilename( 
+                    self.SongList[ Index ] 
+                ), 
+                "%20", 
+                " " 
+            )
+            
+            DisplayNotice( Index .. " belongs to " .. FileName )
+            
+            safeNet.start( "__ObtainSongURL-Retreived" )
+            safeNet.writeString( self.SongList[ Index ] )
+            safeNet.send()
+            
+        end)
+        
+    end
+    
+    function RadioStation:AwaitJSONRequest()
+        
+        self.SongData = nil
+        self.SongList = {}
+        
+        safeNet.receive( "__RequestSongJSON", function()
+            
+            local URL = net.readString()
+            
+            try(
+                function()
+                    
+                    DisplayNotice( "Awaiting until http.canRequest()" )
+                    
+                    AwaitUntil(
+                        function()
+                            
+                            return http.canRequest()
+                            
+                        end,
+                        function()
+                            
+                            // Can HTTP Request
+                            
+                            DisplayNotice( "'" .. URL .. "' requested" )
+                            
+                            http.get( URL, function( Body, Length, Headers, Code )
+                                
+                                if Code != 200 then
+                                    // Check for error
+                                    DisplayError( "Error code : " .. Code, "http.get( " .. URL .. " )" )
+                                    return 
+                                end
+                                
+                                // HTTP Request action here:
+                                
+                                try( function()
+                                
+                                    self.SongList = json.decode( Body )
+                                    
+                                    DisplayNotice( "Got song list : length -> " .. table.count( self.SongList ) .. " songs" )
+                                    
+                                    local ConfirmationTable = {}
+                                    
+                                    ConfirmationTable[ "Code" ] = Code
+                                    ConfirmationTable[ "SongCount" ] = table.count( self.SongList )
+                                    
+                                    safeNet.start( "__RequestSongJSON-Confirmation" )
+                                    safeNet.writeTable( ConfirmationTable )
+                                    safeNet.send()
+                                    
+                                end,
+                                function( Err )
+                                    
+                                    // Catch any exception errors here
+                                    
+                                    DisplayError( Err, "json.decode( Body )" )
+                                    return
+                                    
+                                end)
+                                
+                            end, function( FailReason )
+                                
+                                // Catch any http fail reasons here
+                                
+                                DisplayError( FailReason, "http.get( " .. URL .. " )" )
+                                
+                            end)
+                        end,
+                        "HttpRequestAwait"
+                    )
+                    
+                end,
+                function( Err )
+                    
+                    for Index, Error in pairs( Err ) do
+                        
+                        DisplayError( Error )
+                        
+                    end
+                    
+                end
+            )
+            
+        end)
+        
+    end
+    
+    function RadioClient:initialize()
+        
+        self.Parent = chip()
+        self.Tags = "3d noblock"
+        self.BassObject = nil
+        
+        self.OnMusicChange = function() end
+        
+        self.FFTSample = 0
+        
+        safeNet.receive( "__UpdateSongData", function()
+            
+            self.SongData = safeNet.readTable()
+            
+        end)
+        
+        safeNet.receive( "__ReceivedURL", function()
+            
+            local SongData = safeNet.readTable()
+            
+            self:GenerateBass( SongData )
+            
+        end)
+        
+        safeNet.receive( "__RequestedToResyncronize", function()
+            
+            self:SyncronizeBass()
+            
+        end)
+        
+        hook.add( "tick", "__RadioTick", function()
+            
+            self:Tick()
+            
+        end)
+        
+    end
+    
+    function RadioClient:Tick()
+        
+        if not self.BassObject then return end
+        if not self.BassObject:isValid() then return end
+        
+        if not self.SongData then return end
+        
+        self.BassObject:setPos( self.Parent:getPos() )
+        
+        local Dist = render.getEyePos():getDistance( self.Parent:getPos() )
+        
+        local CDist = math.clamp( Dist - self.SongData.MinDist, self.SongData.MinDist, self.SongData.MaxDist )
+        local T = 1 - ( 1 / ( self.SongData.MaxDist - self.SongData.MinDist ) * ( CDist - self.SongData.MinDist ) )
+        
+        local EaseT = math.easeInSine( T )
+        
+        self.BassObject:setVolume( EaseT )
+        
+        if self.SongData.EndTime then
+            
+            if timer.curtime() > self.SongData.EndTime then
+                
+                printConsole( "Song over" )
+                
+            end
+            
+        end
+        
+        if not self.FFTSample then return end
+        if self.FFTSample > 8 then self.FFTSample = 8 end
+        
+        self.FFT = self.BassObject:getFFT( self.FFTSample )
+        
+    end
+    
+    function RadioClient:SyncronizeBass()
+        
+        if not self.SongData then return end
+        
+        AwaitUntil(
+            function()
+                
+                if not self.BassObject then return false end
+                if not self.BassObject:isValid() then return false end
+                
+                return true
+                
+            end,
+            function()
+                
+                AwaitUntil(
+                    function()
+                        
+                        return timer.curtime() >= self.SongData.StartTime
+                        
+                    end,
+                    function()
+                        
+                        local ShownData = {}
+                        
+                        if not self.BassObject then return end
+                        if not self.BassObject:isValid() then return end
+                        
+                        local CurrentTime = self.BassObject:getTime()
+                        local CorrectTime = math.max( math.abs( timer.curtime() - self.SongData.ActualStartTime ), 0 )
+                        
+                        ShownData[ "CurrentTime" ] = CurrentTime
+                        ShownData[ "CorrectTime" ] = CorrectTime
+                        
+                        safeNet.start( "__Resync-Information" )
+                        safeNet.writeTable( ShownData )
+                        safeNet.send()
+                        
+                        self.BassObject:setTime( CorrectTime )
+                        
+                    end,
+                    "AwaitStartTimeSyncronization"
+                )
+        
+            end,
+            "AwaitBassCreate"
+        )
+        
+    end
+    
+    function RadioClient:GenerateBass( SongData )
+        
+        self.SongData = SongData
+        
+        local URL = self.SongData.URL
+        local StartTime = self.SongData.ActualStartTime
+        
+        if StartTime >= timer.curtime() then
+            
+            AwaitUntil(
+                function()
+                    
+                    return timer.curtime() >= StartTime
+                    
+                end,
+                function()
+                    
+                    self:GenerateBass( SongData )
+                    
+                end,
+                "AwaitStartTime"
+            )
+            return
+            
+        end
+        
+        if hasPermission( "bass.loadURL", URL ) == false then
+            
+            DisplayError( "No permission given, will await permission", 'hasPermission( "loadURL" )' )
+            
+            AwaitUnitl(
+                function()
+                    
+                    return hasPermission( "bass.loadURL", URL )
+                    
+                end,
+                function()
+                    
+                    DisplayNotice( "Bass permission obtained, retrying.." )
+                    self:GenerateBass( SongData )
+                    
+                end,
+                "AwaitBassPermission"
+            )
+            
+            return
+            
+        end
+        
+        DisplayNotice( "Bass permission obtained" )
+        DisplayNotice( "Checking BassObject existence" )
+        
+        AwaitUntil(
+            function()
+                
+                if self.BassObject == nil then return true end
+                if self.BassObject:isValid() == false then return true end
+                
+                // Atempt removal of bass
+                
+                DisplayNotice( "Bass object confirmed, removing.." )
+                
+                self.BassObject:stop()
+                self.BassObject = nil
+                
+                return false
+                
+            end,
+            function()
+                
+                DisplayNotice( "Complete, Attempting generation.." )
+                
+                try(
+                    function()
+                        
+                        bass.loadURL( URL, self.Tags, function( BassObject, ErrN, Err )
+                            
+                            if ErrN != 0 then
+                                
+                                // Error has occured
+                                
+                                DisplayError( "Error Code : " .. ErrN .. " / Error : " .. Err, "bass.loadURL( URL )" )
+                                return
+                                
+                            end
+                            
+                            self.BassObject = BassObject
+                            
+                            self.BassObject:setVolume( 0 )
+                            //self.BassObject:setFade( self.SongData.MinDist, self.SongData.MaxDist, true )
+                            
+                            self:SyncronizeBass()
+                            self.BassObject:play()
+                            
+                            DisplayNotice( "Player : " .. SongData.Station:getName() .. " has been detected as the station" )
+                            
+                            if player() == SongData.Station then
+                                
+                                DisplayNotice( "You are the station, data being requested from server" )
+                                
+                                local BassData = {}
+                                
+                                BassData[ "Length" ] = self.BassObject:getLength()
+                                
+                                safeNet.start( "__SendBassData" )
+                                safeNet.writeTable( BassData )
+                                safeNet.send()
+                                
+                            end
+                            
+                            self.OnMusicChange( self.URL )
+                            
+                            DisplayNotice( "BassObject has been obtained" )
+                            
+                        end)
+                        
+                    end,
+                    function( Err )
+                        
+                        DisplayError( Err, "bass.loadURL( " .. URL .. " )" )
+                        
+                    end
+                )
+                
+            end,
+            "BassExists"
+        )
+        
+    end
+    
+else
+    
+    RadioManager = class( "RadioManager" )
+    
+    local InitClients = {}
+    local InitClientLookup = {}
+    
+    hook.add( "ClientInitialized", "", function( Player )
+        
+        InitClients[ table.count( InitClients ) + 1 ] = Player
+        InitClientLookup[ Player:getSteamID() ] = Player
+        
+    end)
+    
+    function RadioManager:initialize()
+        
+        self.RetryTime = 5 // Second
+        self.RetryCount = 3 // Times
+        
+        self.StartupDelay = 0.125 // Seconds
+        
+        self.SonglistObtained = false
+        
+        self.SongEndTime = 0
+        
+        self.SongJSON = ""
+        self.URL = nil
+        self.Station = nil
+        
+        safeNet.receive( "__RequestStationPermission", function( _, Plr )
+            
+            if self.Station != nil then return end
+            
+            DisplayNotice( "Player " .. Plr:getName() .. " registered as a station" )
+            
+            self.Station = Plr
+            
+        end)
+        
+        safeNet.receive( "__ObtainSongURL-Retreived", function( _, Plr )
+            
+            if Plr != self.Station then return end
+            
+            local SongURL = safeNet.readString()
+            
+            self:PassURL( SongURL )
+            
+        end)
+        
+        safeNet.receive( "__SendBassData", function( _, Plr )
+            
+            self.Cooldown = false
+            
+            local BassData = safeNet.readTable()
+            
+            self.BassData = BassData
+            
+        end)
+        
+        safeNet.receive( "__Resync-Information", function( _, Plr )
+            
+            local SyncInfo = safeNet.readTable()
+            
+            printConsole( 
+                "--------------------------\n" .. 
+                "Plr " .. 
+                Plr:getName() .. 
+                ": \nCurrent Time = " .. 
+                SyncInfo.CurrentTime .. 
+                "\nCorrectTime Time = " .. 
+                SyncInfo.CorrectTime .. 
+                "\n--------------------------"
+            )
+            
+        end)
+        
+    end
+    
+    function RadioManager:SetSonglistURL( URL )
+        
+        self.SonglistObtained = false
+        
+        self.SongJSON = ""
+        self.URL = URL
+        
+        AwaitUntil(
+        function()
+            
+            if self.Station == nil then return false end
+            if self.Station:isValid() == nil then return false end
+            
+            return InitClientLookup[ self.Station:getSteamID() ] != nil
+            
+        end,
+        function()
+            
+            safeNet.start( "__RequestSongJSON" )
+            safeNet.writeString( self.URL )
+            safeNet.send( owner() )
+            
+            DisplayNotice( "Attempting to retreieve confirmation.." )
+            
+            local TimerName = "RequestSongJSON" .. ":" .. self.RetryTime
+            
+            DisplayNotice( "Retry times left : " .. self.RetryCount )
+            
+            timer.create( TimerName, self.RetryTime, self.RetryCount, function()
+                
+                if timer.repsleft( TimerName ) == 0 then
+                    
+                    error( "No songList obtained" )
+                    
+                end
+                
+                DisplayNotice( "Retry times left : " .. timer.repsleft( TimerName ) )
+                
+            end)
+            
+            safeNet.receive( "__RequestSongJSON-Confirmation", function( _, Plr )
+                
+                if self.Station != Plr then return end
+                if self.SonglistObtained == true then return end
+                
+                local SongListData = safeNet.readTable()
+                
+                timer.remove( TimerName )
+                
+                DisplayNotice( "Songlist loaded, " .. SongListData.SongCount .. " songs.." )
+                DisplayNotice( "Songlist code " .. SongListData.Code )
+                
+                self.SonglistObtained = true
+                
+            end)
+            
+        end, "StationObtainAwait" )
+        
+    end
+    
+    function RadioManager:SetBassTime( Time )
+        
+        if Time == nil then
+            
+            DisplayError( "No time given", "RadioManager:SetBassTime( Time: nil )" )
+            return
+            
+        end
+        
+        AwaitUntil(
+            function()
+                
+                if self.BassData == nil then return false end
+                if self.BassData.Length == nil then return false end
+                
+                return true
+                
+            end,
+            function()
+                
+                local FinalTime = math.clamp( Time, 0, self.BassData.Length )
+                
+                self.SongData.EndTime = self.SongData.ActualStartTime + self.BassData.Length
+                
+                self:RegenerateSongData( self.SongData.URL, FinalTime )
+                self:ResyncSong()
+                
+            end,
+            "AwaitUntilBassData"
+        )
+        
+    end
+    
+    function RadioManager:PassURL( URL )
+        
+        AwaitUntil(
+            function()
+                
+                return self.Station != nil
+                
+            end,
+            function()
+                
+                self.BassData = nil
+                self.SongData = nil
+                
+                self:RegenerateSongData( URL, 0 )
+                
+            end,
+            "AwaitUntilStation"
+        )
+        
+    end
+    
+    function RadioManager:RegenerateSongData( URL, StartDelay )
+        
+        First = false
+        
+        if self.SongData == nil then First = true end
+        
+        self.SongData = {}
+        
+        self.SongData.URL = URL
+        
+        self.SongData.StartTime = timer.curtime() + self.StartupDelay
+        self.SongData.ActualStartTime = self.SongData.StartTime
+        self.SongData.Station = self.Station
+        
+        self.SongData.MinDist = 200
+        self.SongData.MaxDist = 500
+        
+        if StartDelay != 0 and StartDelay != nil then
+           
+            self.SongData.ActualStartTime = self.SongData.StartTime + StartDelay 
+            
+        end
+        
+        if First then
+            
+            safeNet.start( "__ReceivedURL" )
+            safeNet.writeTable( self.SongData )
+            safeNet.send()
+            
+        else
+            
+            safeNet.start( "__UpdateSongData" )
+            safeNet.writeTable( self.SongData )
+            safeNet.send()
+            
+        end
+        
+    end
+    
+    function RadioManager:ResyncSong( Plr )
+        
+        safeNet.start( "__RequestedToResyncronize" )
+        safeNet.send( Plr )
+        
+    end
+    
+    function RadioManager:ObtainSong( Index )
+        
+        if self.Cooldown == true then 
+            
+            DisplayError( "Bass throttle limit" )
+            return
+            
+        end
+        
+        self.SongEndTime = 0
+        self.Cooldown = true
+        
+        AwaitUntil(
+            function()
+                
+                return self.SonglistObtained == true
+                
+            end,
+            function()
+                
+                DisplayNotice( "Attempting to obtain song at index : '" .. Index .. "'" )
+                
+                safeNet.start( "__ObtainSongURL" )
+                safeNet.writeInt( Index, 32 )
+                safeNet.send()
+                
+            end,
+            "SonglistObtainedAwait"
+        )
+        
+    end
+    
+    function RadioManager:DebugCommmandSetup()
+        
+        self.DebugCommands = {}
+        
+        self.DebugCommands[ "!resync" ] = function( Expl )
+            
+            print( "Resyncing.." )
+            
+            self:ResyncSong()
+            
+        end
+        
+        self.DebugCommands[ "!settime" ] = function( Expl )
+            
+            if not tonumber( Expl[2] ) then print( "No time given" ) return end
+            print( "Setting time.." )
+            
+            self:SetBassTime( tonumber( Expl[2] ) )
+            
+        end
+        
+        self.DebugCommands[ "!setsong" ] = function( Expl )
+            
+            if not tonumber( Expl[2] ) then print( "No song id given" ) return end
+            print( "Setting song.." )
+            
+            self:ObtainSong( tonumber( Expl[2] ) )
+            
+        end
+        
+        hook.add( "PlayerSay", table.address( self ) .. ":PSay", function( Player, Text, TeamChat )
+            
+            if Player != owner() then return end
+            
+            local Expl = string.explode( " ", Text )
+            
+            local Func = self.DebugCommands[ string.lower( Expl[1] ) ]
+            
+            if Func then
+                
+                Func( Expl )
+                return ""
+                
+            end
+            
+        end)
+        
+    end
+    
+end

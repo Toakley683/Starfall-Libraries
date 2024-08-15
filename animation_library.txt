@@ -1,0 +1,113 @@
+--@name animation_library
+--@author toakley682
+--@shared
+--@include https://raw.githubusercontent.com/Jacbo1/Public-Starfall/main/SafeNet/safeNet.lua as SafeNet
+local net = require("SafeNet")
+
+if CLIENT then
+    
+    AnimationPlayer = class( "AnimationPlayer" )
+    
+    function AnimationPlayer:initialize()
+        
+        self.Target = owner()
+        self.Dummy = nil
+        
+        self.DummyBones = {}
+        
+        self.CreatorMode = true
+        
+        safeNet.init( function()
+            
+            safeNet.receive( "DummySend", function()
+                
+                safeNet.readEntity( function( Dummy )
+                    
+                    self.Dummy = Dummy
+                    
+                end)
+                
+            end, "" )
+            
+        end)
+        
+    end
+    
+    function AnimationPlayer:DummySpawn( Callback )
+        
+        local TimerName = table.address( self ) .. ":DummyAwait"
+        
+        timer.create( TimerName, 0.3, 0, function()
+            
+            if self.Dummy == nil then return end
+            
+            timer.remove( TimerName )
+            Callback()
+            
+        end)
+        
+    end
+    
+    function AnimationPlayer:DummyGetBones( Callback )
+        
+        self.DummyBones = {}
+        
+        for I = 1, self.Dummy:getBoneCount() do
+            self.DummyBones[ table.count( self.DummyBones ) + 1 ] = self.Dummy:getBoneName( I )
+            Callback( self.Dummy:getBoneName( I ) )
+        end
+        
+    end
+    
+    function AnimationPlayer:DummyReset()
+        
+        self:DummyGetBones( function( Bone )
+            
+            local BoneIndex = self.Dummy:lookupBone( Bone )
+            
+            if BoneIndex == nil then return end
+            
+            self.Dummy:manipulateBoneAngles( BoneIndex, Angle( 0, 0, 0 ) )
+            self.Dummy:manipulateBonePosition( BoneIndex, Vector() )
+            
+        end)
+        
+    end
+    
+    function AnimationPlayer:Setup()
+        
+        if self.CreatorMode == true then
+            
+            self:DummySpawn( function()
+                
+                self:DummyReset()
+            
+            end)
+            
+        end
+        
+    end
+    
+    local AnimPlayer = AnimationPlayer()
+    
+    AnimPlayer:Setup()
+    
+else
+    
+    Welded = chip():isWeldedTo()
+    
+    if isValid( Welded ) then
+        
+        local Dummy = Welded
+        
+        safeNet.init( function()
+            
+            safeNet.start( "DummySend", "" )
+            safeNet.writeEntity( Dummy )
+            safeNet.send( nil, nil, false )
+            
+        end)
+        
+    end
+    
+end

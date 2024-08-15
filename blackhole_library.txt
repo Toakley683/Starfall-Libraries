@@ -1,0 +1,101 @@
+--@name blackhole_library
+--@author toakley682
+--@client
+
+Blackhole = class( "Blackhole" )
+
+function Blackhole:initialize( Position, Parent, Size, OutlineCount )
+    
+    if not OutlineCount then OutlineCount = 16 end
+    
+    if not Position then error( "No Position for blackhole ") end
+    if not Size then error( "No Size for blackhole ") end
+    
+    self.Position = Position
+    self.Parent = Parent
+    self.Size = Size
+    
+    if hologram.canSpawn() == false then self:Destroy() return end
+    
+    self.BlackholeHologram = hologram.create( self.Position, Angle(), "models/holograms/hq_sphere.mdl", Vector( self.Size ) )
+    self.BlackholeHologram:suppressEngineLighting( true )
+    self.BlackholeHologram:setColor( Color( 0, 0, 0 ) )
+    self.BlackholeHologram:setParent( self.Parent )
+    
+    if hologram.canSpawn() == false then self:Destroy() return end
+    
+    self.BlackholeOutlineHologram = hologram.create( self.Position, Angle(), "models/holograms/hq_sphere.mdl", -Vector( self.Size + 0.02 ) )
+    self.BlackholeOutlineHologram:suppressEngineLighting( true )
+    self.BlackholeOutlineHologram:setColor( Color( 255, 255, 255, 125 ) )
+    self.BlackholeOutlineHologram:setParent( self.Parent )
+    
+    self.OutlineCount = OutlineCount
+    self.OutlineSize = self.Size * 7
+    
+    self.RotateSpeed = 3
+        
+    self.Outlines = {}
+    
+    for I = 1, self.OutlineCount, 1 do
+        
+        if hologram.canSpawn() == false then self:Destroy() return end
+        
+        self.Outlines[ I ] = hologram.create( self.Position, Angle(), "models/holograms/hq_sphere.mdl", -Vector( self.Size + math.sin( ( I / self.OutlineCount ) * 2 ) * self.OutlineSize ):setZ( self.Size * 2 ) )
+        self.Outlines[ I ]:setParent( self.BlackholeHologram )
+        
+        local Alpha = 255 / self.OutlineCount * I
+        
+        self.Outlines[ I ]:setColor( Color( 255, 255, 255, Alpha ) )
+        
+        self.Outlines[ I ]:setMaterial( "models/props_c17/fisheyelens" )
+        
+    end
+    
+    self.ThinkHookName = table.address( self ) .. ":OutlineUpdate"
+    
+    hook.add( "think", self.ThinkHookName, function()
+        
+        for Index, Outline in ipairs( self.Outlines ) do
+            
+            local IsOdd = Index % 2 == 0
+            
+            local Rev = 1
+            if IsOdd then Rev = -1 end
+            
+            local Direction = ( render.getEyePos() - Outline:getPos() ):getNormalized():getAngle()
+            local AddedAngle = Angle( 0, 0, Rev * ( timer.curtime() * 5 * self.RotateSpeed ) + ( 360 / self.OutlineCount ) * Index )
+            
+            local _, FinalAngle = localToWorld( Vector(), AddedAngle, Vector(), Direction )
+            
+            Outline:setAngles( FinalAngle )
+            
+        end
+        
+    end)
+    
+    
+end
+
+function Blackhole:Destroy()
+        
+    if self.ThinkHookName != nil then hook.remove( "think", self.ThinkHookName ) end
+    
+    try( function()
+        
+        self.BlackholeHologram:remove()
+        self.BlackholeOutlineHologram:remove()
+        
+        for Index, Outline in ipairs( self.Outlines ) do
+            
+            if Outline:isValid() == false then continue end
+            try( function()
+                
+                Outline:remove()
+                
+            end)
+            
+        end
+        
+    end)
+    
+end

@@ -1,0 +1,143 @@
+--@name screen_snow_library
+--@author toakley682, ax25
+--@shared
+
+if CLIENT then
+    
+    SnowEffect = class( "SnowEffect" )
+    local Snow = class( "Snow" )
+    
+    function Snow:initialize( Effect )
+        
+        self.Effect = Effect
+        
+        self:Reset()
+        
+    end
+    
+    function Snow:Reset()
+        
+        self.SizeT = math.easeInCirc( math.rand( 0, 1 ) )
+        self.Size = math.lerp( self.SizeT, 2, 4 )
+        
+        self.X = math.random( self.Effect.X, self.Effect.X + self.Effect.W )
+        self.Y = self.Effect.Y
+        
+        self.VelX = math.rand( -20, 20 )
+        self.VelY = math.rand( 70, 130 )
+        
+        self.StartCurtime = timer.curtime() + math.rand( 0.1, 16 )
+        
+    end
+    
+    function Snow:CheckBounds()
+        
+        if 
+            self.X > self.Effect.X + self.Effect.W or
+            self.X < self.Effect.X or
+            self.Y > self.Effect.Y + self.Effect.H or
+            self.Y < self.Effect.Y
+        then
+            
+            // Particle Out of bounds
+            
+            self.InBounds = false
+            
+            self:Reset()
+            
+        else
+            
+            self.InBounds = true
+            
+        end
+        
+    end
+    
+    function Snow:Frame()
+        
+        if not self.Y then self.Y = Effect.Y end
+        if timer.curtime() <= self.StartCurtime then return end
+        
+        if self.InBounds == true then
+            
+            // In bounds
+            
+            local FPSDelta = 1 / self.Effect.FPS
+            
+            self.X = self.X + ( self.Effect.WindX + self.VelX ) * timer.frametime()
+            self.Y = self.Y + ( self.VelY ) * timer.frametime()
+            
+            render.drawFilledCircle( self.X, self.Y, self.Size )
+            
+        end
+        
+    end
+    
+    function SnowEffect:initialize( Particles, X, Y, W, H )
+        
+        self.ParticleCount = Particles
+        
+        self.X = X
+        self.Y = Y
+        self.W = W
+        self.H = H
+        
+        self.WindX = 0
+        
+        self.Snow = {}
+        
+        self.F = 0
+        self.FPS = 60
+        
+        self.LastFrameCheck = timer.curtime()
+        self.FrameCheckTime = 0.2
+        
+        for I = 1, self.ParticleCount do
+            
+            self.Snow[ table.count( self.Snow ) + 1 ] = Snow( self )
+            
+        end
+        
+        timer.create( table.address( self ) .. ":FPSGet", 1, 0, function()
+            
+            self.FPS = self.F
+            self.F = 0
+            
+        end)
+        
+    end
+    
+    function SnowEffect:Render()
+        
+        self.F = self.F + 1
+        
+        self.WindX = math.sin( timer.curtime() ) * 12
+        
+        render.setColor( Color( 255, 255, 255 ) )
+        
+        self.CheckBounds = false
+        
+        if timer.curtime() >= self.LastFrameCheck then
+            
+            self.CheckBounds = true            
+            self.LastFrameCheck = timer.curtime() + self.FrameCheckTime
+            
+        end
+        
+        for I = 1, self.ParticleCount do
+            
+            if self.CheckBounds == true then
+                
+                self.Snow[ I ]:CheckBounds()
+                
+            end
+            
+            self.Snow[ I ]:Frame()
+            
+        end
+        
+        self.CheckBounds = false
+        
+    end
+    
+end

@@ -1,0 +1,174 @@
+--@name hitboxes
+--@author unknow
+--@client
+
+function getScreenPosOnHoloRT( Screen, StartPos, AimNormal ) -- toakley
+    
+    local Intersect = trace.intersectRayWithPlane( StartPos, AimNormal, Screen:getPos(), Screen:getAngles():getUp() )
+    if not Intersect then return nil, nil end
+    
+    local ScreenSize = Screen:getScale() * 12
+    local ScreenResolution = 1024
+    
+    local SizeToPixelRatioX = ScreenResolution / ScreenSize[1]
+    local SizeToPixelRatioY = ScreenResolution / ScreenSize[2]
+    
+    local ScreenCorner = localToWorld( Vector( -ScreenSize[1] / 2, -ScreenSize[2] / 2, 0 ), Angle(), Screen:getPos(), Screen:getAngles() ) 
+    local LocalIntersect = worldToLocal( Intersect, Angle(), ScreenCorner, Screen:getAngles() ) 
+    
+    local PixelY = LocalIntersect[1] * SizeToPixelRatioX
+    local PixelX = LocalIntersect[2] * SizeToPixelRatioY
+    
+    if ( (PixelX > 1024) or (PixelX < 0) ) or ( (PixelY > 1024) or (PixelY < 0) ) then
+       PixelX,PixelY = nil, nil 
+    else
+        return math.floor(PixelX), math.floor(PixelY)
+    end
+    
+end
+
+hitboxes=class("hitboxes") -- i haven't made this hitbox lib. Am not taking credit for it, only did some modification
+_hitboxes={}
+
+cursorFunc=function(screen)
+    local x,y
+
+    if screen then 
+        x,y=getScreenPosOnHoloRT( screen, eyePos(), eyeVector() )
+    else
+        x,y=render.cursorPos()
+    end
+
+    return (x and y) and Vector(x,y)
+end
+
+function hitboxes.create(layer,id,x,y,w,h,callback,hover,renderFunc,screen)
+    if !_hitboxes[layer] then
+        _hitboxes[layer]={}
+    end
+
+    if !_hitboxes[layer][id] then
+        _hitboxes[layer][id]={
+            x=x,
+            y=y,
+            w=w,
+            h=h,
+            callback=callback,
+            hover=false,
+            screen=screen
+        }
+    else
+        if hover and _hitboxes[layer][id].hover then
+            hover()
+        end
+
+        _hitboxes[layer][id].x=x
+        _hitboxes[layer][id].y=y
+        _hitboxes[layer][id].w=w
+        _hitboxes[layer][id].h=h
+    end 
+
+    if renderFunc then
+        renderFunc(x,y,w,h)
+    end
+end
+
+function hitboxes.each(_hitboxes,func)
+    for i,layer in pairs(_hitboxes) do
+        for id,hitbox in pairs(layer) do
+            func(i,id,hitbox)
+        end
+    end
+end
+
+function hitboxes.edit(layer,id,x,y,w,h,callback)
+    local hitbox=_hitboxes[layer][id]
+    
+    _hitboxes[layer][id]={
+        x=x or hitbox.x,
+        y=y or hitbox.y,
+        w=w or hitbox.w,
+        h=h or hitbox.h,
+        callback=callback or hitbox.callback,
+        hover=false,
+        screen = screen or hitbox.screen
+    }
+end
+
+function hitboxes.remove(layer,id)
+    if !_hitboxes[layer] then
+        return
+    end
+
+    _hitboxes[layer][id]=nil
+end
+
+function hitboxes.clear(layer)
+    if !_hitboxes[layer] then
+        return
+    end
+
+    _hitboxes[layer]=nil
+end
+
+function hitboxes.purge()
+    for layer,_ in pairs(_hitboxes) do
+        hitboxes.clear(layer)
+    end
+end
+
+function hitboxes.renderDebug()
+    hitboxes.each(_hitboxes,function(i,id,hitbox)
+        render.setColor(Color((i/4)*((!isstring(id) and id*20 or 0)+timer.realtime()*20),1,1):hsvToRGB())
+        
+        render.drawRectOutline(hitbox.x,hitbox.y,hitbox.w,hitbox.h)
+    end)
+end
+
+hook.add("render","_hitboxes",function()
+    if hitboxes.debug then
+        hitboxes.renderDebug()
+    end
+end)
+
+hook.add("think","_hitboxes",function()
+    local curLayer=nil
+    
+    hitboxes.each(_hitboxes,function(i,id,hitbox)
+        if curLayer and curLayer!=i then
+            hitboxes.each(_hitboxes,function(i,id,hitbox)
+                if curLayer<i then
+                    hitbox.hover=false
+                end
+            end)
+            
+            return
+        end
+        
+        --printConsole(tostring(cursorFunc(hitbox.screen)) .. " " .. tostring(Vector(hitbox.x,hitbox.y)) .. " / " .. tostring(Vector(hitbox.x+hitbox.w,hitbox.y+hitbox.h)) )
+        
+        local cur = cursorFunc(hitbox.screen)
+
+        if cur and cur:withinAABox(Vector(hitbox.x,hitbox.y),Vector(hitbox.x+hitbox.w,hitbox.y+hitbox.h)) then
+            if i!=0 then
+                curLayer=i
+            end
+
+            hitbox.hover=true
+        else
+            hitbox.hover=false
+        end
+    end)
+end)
+
+hook.add("inputPressed","_hitboxes",function(key)
+    hitboxes.each(_hitboxes,function(i,id,hitbox)
+        if hitbox.hover and hitbox.callback then
+            if hitboxes.filter and !hitboxes.filter(key,hitbox,i,id) then
+                return
+            end
+
+            hitbox.callback(key,cursorFunc(hitbox.screen))
+        end
+    end)
+end)

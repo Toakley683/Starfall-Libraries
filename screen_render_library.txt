@@ -1,0 +1,185 @@
+--@name screen_render_library
+--@author
+--@shared
+--@include https://raw.githubusercontent.com/Jacbo1/Public-Starfall/main/SafeNet/safeNet.lua as SafeNet
+local net = require("SafeNet")
+
+if CLIENT then
+    
+    ScreenRender = class( "ScreenRender" )
+    
+    function ScreenRender:initialize()
+        
+        self.Components = chip():getLinkedComponents()
+        
+        self.Debug = true
+        
+        self.UseFPS = true
+        self.FPS = 60
+        
+        self.HookName = table.address( self ) .. ":__RenderOffScreen"
+        self.RenderHookName = table.address( self ) .. ":__RenderOnScreen"
+        self.RTName = table.address( self ).. ":__RenderRT"
+        
+        self.Min = 1
+        self.Mag = 1
+        
+        render.createRenderTarget( self.RTName )
+        
+        self.ScreenRT = material.create( "UnlitGeneric" )
+        self.ScreenRT:setTextureRenderTarget( "$basetexture", self.RTName )
+        self.ScreenRT:setInt( "$flags", 0 ) 
+        
+        self.Render = function() end
+        
+    end
+    
+    function ScreenRender:__ScreenInit( Screen )
+        
+        self:link( Screen )
+        
+    end
+    
+    function ScreenRender:__CreateNewScreen( Pos, Ang, Model, Frozen, Callback )
+        
+        safeNet.receive( "__CreatedScreen", function()
+            
+            self.Screen = safeNet.readEntity()
+
+            Callback( Screen )
+            
+        end)
+        
+        if player() != owner() then return end
+        
+        safeNet.start( "__OnGetScreenCreate" )
+        safeNet.writeTable( { Pos=Pos, Ang=Ang, Model=Model, Frozen=Frozen, Index=table.address( self ) } )
+        safeNet.send()
+        
+    end
+    
+    function ScreenRender:NewScreen( Position, Angles, Model, Frozen )
+        
+        if not Model then error( "No screen model given" ) end
+        if not Position then Position = Vector() end
+        if not Angles then Angles = Angle() end
+        if not Frozen then Frozen = true end
+        
+        if self.Screen then return end
+        
+        self:__CreateNewScreen( Position, Angles, Model, Frozen, function( Screen )
+            
+            if self.Debug == true then printConsole( "Screen has been successfully created" ) end
+            
+            self:__ScreenInit( Screen )
+            
+        end)
+        
+    end
+    
+    function ScreenRender:SetScreen( Screen )
+        
+        if not Screen:isValid() then error( "Invalid screen" ) end
+        
+        self.Screen = Screen
+        self:__ScreenInit( self.Screen )
+        
+    end
+    
+    function ScreenRender:link( Screen )
+        
+        if player() != owner() then return end
+        
+        safeNet.start( "__LinkScreen" )
+        safeNet.writeEntity( self.Screen )
+        safeNet.send()
+        
+        if self.Debug == true then printConsole( "Screen has been successfully linked" ) end
+        
+    end
+    
+    function ScreenRender:Setup()
+        
+        self.FPSDelta = 1 / self.FPS
+        self.NextMoveDelay = 0
+        
+        hook.add( "render", self.RenderHookName, function()
+            
+            if not self.Screen then return end
+            if render.getScreenEntity() != self.Screen then return end
+            
+            local W, H = render.getResolution()
+            
+            render.setFilterMin( self.Min )
+            render.setFilterMag( self.Mag )
+            
+            render.setMaterial( self.ScreenRT )
+            render.drawTexturedRect( 0, 0, W, H )
+            
+        end)
+        
+        if self.UseFPS == true then
+            
+            hook.add( "renderoffscreen", self.HookName, function()
+                
+                self.Curtime = timer.curtime()
+                if self.NextMoveDelay > self.Curtime then return end
+                self.NextMoveDelay = self.Curtime + self.FPSDelta
+                
+                render.selectRenderTarget( self.RTName )
+                self.Render()
+                
+            end)
+            
+        else
+            
+            hook.add( "renderoffscreen", self.HookName, function()
+                
+                render.selectRenderTarget( self.RTName )
+                self.Render()
+                
+            end)
+            
+        end
+        
+    end
+    
+else
+    
+    Screens = {}
+    
+    safeNet.receive( "__OnGetScreenCreate", function( _, Plr )
+        
+        if Plr != owner() then return end
+        
+        local Data = safeNet.readTable()
+        
+        if Screens[ Data.Index ] then return end
+        
+        Screens[ Data.Index ] = prop.createComponent( Data.Pos, Data.Ang, "starfall_screen", Data.Model, Data.Frozen )
+        
+        timer.create( "__ScreenTimerRetry", 0.1, 0, function()
+            
+            if not Screens[ Data.Index ] then return end
+            
+            timer.remove( "__ScreenTimerRetry" )
+            
+            safeNet.start( "__CreatedScreen" )
+            safeNet.writeEntity( Screens[ Data.Index ] )
+            safeNet.send()
+            
+        end)
+        
+    end)
+    
+    safeNet.receive( "__LinkScreen", function( _, Plr )
+        
+        if Plr != owner() then return end
+        
+        local Screen = safeNet.readEntity()
+        
+        Screen:linkComponent( chip() )
+        
+    end)
+    
+end

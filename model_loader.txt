@@ -1,0 +1,352 @@
+--@name Model Loader
+--@author toakley682
+--@client
+
+Model = class( "ModelLoader" )
+
+function Model:initialize()
+    
+    self.ModelURL = ""
+    self.Meshs = {}
+    
+    self.Position = Vector()
+    self.Angles = Angle()
+    self.Scale = Vector( 1, 1, 1 )
+    
+    self.TextureShaders = {}
+    self.CopiedMaterials = {}
+    
+    self.Holograms = {}
+    self.Textures = {}
+    
+    self.ParentToFirst = true
+    
+    self.ShowBounds = false
+    self.CourotinePercent = 0.5
+    
+    self.RenderBoundMin = Vector()
+    self.RenderBoundMax = Vector()
+    
+    self.MatIntegers = {}
+    
+    self.Main = nil
+    
+    self.ShaderTypes = {}
+        
+end
+
+function Model:SetRenderBounds( Min, Max )
+    
+    self.RenderBoundMin = Min
+    self.RenderBoundMax = Max
+    
+end
+
+function Model:SetShaderType( ID, Shader )
+    
+    self.ShaderTypes[ ID ] = Shader
+    
+end
+
+function Model:SetModelURL( URL )
+    
+    self.HasMesh = false
+    self.ModelURL = URL
+    
+end
+
+function Model:SetEmptyMaterial( ModelID )
+    
+    if not ModelID then ModelID = -1 end
+    
+    if not self.TextureShaders[ ModelID ] then self.TextureShaders[ModelID] = {} end
+    
+    self.TextureShaders[ ModelID ][ "$basetexture" ] = { URL="" }
+    
+end
+
+function Model:PresetMaterialURL( MaterialName, Shader, URL )
+    
+    if not ModelID then ModelID = -1 end
+    
+    if self.CopiedMaterials[ MaterialName ] == nil then self.CopiedMaterials[ MaterialName ] = { _ID_INFO=-1 } end
+    if self.CopiedMaterials[ MaterialName ][ Shader ] == nil then self.CopiedMaterials[ MaterialName ][ Shader ] = {} end
+    
+    self.CopiedMaterials[ MaterialName ][ Shader ] = { URL=URL }
+    
+end
+
+function Model:SetPresetMaterial( ModelID, MaterialName )
+    
+    if not ModelID then ModelID = -1 end
+    
+    if self.CopiedMaterials[ MaterialName ][ "_ID_INFO" ] == -1 then 
+        
+        self.CopiedMaterials[ MaterialName ][ "_ID_INFO" ] = ModelID
+        
+        for Shader, Info in pairs( self.CopiedMaterials[ MaterialName ] ) do
+            if Shader == "_ID_INFO" then continue end
+            
+            self:SetTextureURL( Shader, self.CopiedMaterials[ MaterialName ][ Shader ].URL, ModelID, nil )
+            
+        end
+        
+        return
+    end
+    
+    self:SetExistingMaterial( ModelID, self.CopiedMaterials[ MaterialName ][ "_ID_INFO" ] )
+    
+end
+
+function Model:SetExistingMaterial( ModelID, CopyModelID )
+    
+    if not self.TextureShaders[ ModelID ] then self.TextureShaders[ModelID] = {} end
+    
+    self.TextureShaders[ ModelID ][ "COPY_TEXTURE" ] = { ID=CopyModelID }
+    
+end
+
+function Model:SetTextureURL( Shader, URL, ModelID, Callback )
+    
+    if not ModelID then ModelID = -1 end
+    
+    if self.TextureShaders[ ModelID ] == nil then self.TextureShaders[ ModelID ] = {} end
+    
+    self.TextureShaders[ ModelID ][ Shader ] = { URL=URL, Callback=Callback }
+    
+end
+
+function Model:SetInt( ModelID, Integer )
+    
+    self.MatIntegers[ ModelID ] = Integer
+    
+end
+
+function Model:SetMaterial( Material, ModelID )
+    
+    if not ModelID then ModelID = -1 end
+    
+    if not self.TextureShaders[ ModelID ] then self.TextureShaders[ModelID] = {} end
+    
+    self.TextureShaders[ ModelID ][ "Material" ] = Material
+    
+end
+
+function Model:Setup()
+    
+    if not self.ModelURL or self.ModelURL == "" then error( "Tried to setup with no ModelURL" ) end
+    
+    self.Setup = true
+    
+    for MeshID, Textures in pairs( self.TextureShaders ) do
+        
+        if Textures.Material != nil then
+            
+            self.Textures[ MeshID ] = Textures.Material
+            continue
+            
+        end
+        
+        if Textures.COPY_TEXTURE then
+            
+            if not self.Textures[ Textures.COPY_TEXTURE.ID ] then error( "Trying to set existing material to non existent model!" ) end
+            
+            self.Textures[ MeshID ] = self.Textures[ Textures.COPY_TEXTURE.ID ]
+            
+            continue
+            
+        end
+        
+        local RenderTargetName = table.address( self ) .. ":BaseTexture:" .. MeshID
+        
+        render.createRenderTarget( RenderTargetName )
+        
+        self.Textures[ MeshID ] = material.create( self.ShaderTypes[ MeshID ] or "VertexLitGeneric" )
+        
+        if self.MatIntegers[ MeshID ] then
+            
+            self.Textures[ MeshID ]:setInt( "$flags", self.MatIntegers[ MeshID ] )
+            
+        else
+            
+            if self.MatIntegers[ -1 ] then
+                
+                self.Textures[ MeshID ]:setInt( "$flags", self.MatIntegers[ -1 ] )
+                
+            end
+            
+        end
+        
+        for Shader, Data in pairs( Textures ) do
+            
+            if Data.URL == "" or Data.URL == nil then continue end
+            
+            timer.create( table.address( Textures ) .. ":URL"..":Shader:"..Shader, 0.25, 0, function()
+                
+                if http.canRequest() == false then return end
+                
+                self.Textures[ MeshID ]:setTextureRenderTarget( "$basetexture", RenderTargetName )
+                
+                self.Textures[ MeshID ]:setTextureURL( Shader, Data.URL, Data.Callback )
+                
+                timer.remove( table.address( Textures ) .. ":URL"..":Shader:"..Shader )
+                
+            end)
+            
+        end
+        
+    end
+    
+end
+
+function Model:MeshData( Callback )
+    
+    if not self.Setup then error( "Tried to render model without setup()" ) end
+    
+    if self.HasMesh == true then
+        
+        timer.create( table.address( self )..":AwaitMesh", timer.frametime(), 0, function()
+            
+            if not self.Meshs then throw( "Tried to render model without mesh" ) end
+            
+            if table.count( self.Meshs ) > 0 then
+                
+                Callback()
+                timer.remove( table.address( self )..":AwaitMesh" )
+                
+            end
+            
+            return
+            
+        end)
+        
+        return 
+    end
+    
+    self.HasMesh = true
+    
+    timer.create( table.address( self ) .. ":CreateModel", 0.02, 0, function()
+        
+        if http.canRequest() == false then return end
+    
+        http.get( self.ModelURL, function( MeshData )
+            
+            local mesh_thread = coroutine.wrap( function()
+                
+                local Meshes = mesh.createFromObj( MeshData, true, false )
+                local ValuesKeyValues = table.getKeys( Meshes )
+                
+                self.Keys = ValuesKeyValues
+                
+                for I = 1, table.count( ValuesKeyValues ), 1 do
+                    
+                    self.Meshs[I] = Meshes[ ValuesKeyValues[I] ]
+                    
+                end
+                
+                return true
+                
+            end)
+        
+            hook.add( "think", table.address( self ) .. ":Render", function()
+                
+                while quotaAverage() < quotaMax() * self.CourotinePercent do
+            
+                    if mesh_thread() then
+                        
+                        Callback()
+                        
+                        hook.remove( "think", table.address( self ) .. ":Render" )
+                        return
+                    
+                    end
+                
+                end
+            
+            end)
+            
+        end)
+        
+        timer.remove( table.address( self ) .. ":CreateModel" )
+        
+    end)
+    
+end
+
+function Model:CreateHologram( Index, Mesh, Parent )
+    
+    self.Holograms[Index] = hologram.create( self.Position, self.Angles, "models/hunter/blocks/cube025x025x025.mdl", self.Scale )
+    
+    if self.ShowBounds == true then
+        
+        local A = hologram.create( localToWorld( self.RenderBoundMin, Angle(), self.Position, self.Angles ), self.Angles, "models/hunter/blocks/cube025x025x025.mdl", Vector(1) )
+        local B = hologram.create( localToWorld( self.RenderBoundMax, Angle(), self.Position, self.Angles ), self.Angles, "models/hunter/blocks/cube025x025x025.mdl", Vector(1) )
+        
+    end
+    
+    if not self.Holograms[Index] then error( "No hologram found" ) end
+    
+    self.Holograms[Index]:setMesh( Mesh )
+    
+    if self.Textures[ Index ] then
+        
+        self.Holograms[Index]:setMeshMaterial( self.Textures[ Index ] or self.Textures[-1] )
+        
+    end
+    
+    if Parent == false then return end
+    
+    if isValid( self.Parent ) and Index == 1 then
+        
+        self.Holograms[Index]:setParent( self.Parent )
+        
+    end
+    
+    if Index > 1 then
+        
+        if self.ParentToFirst == true then
+            
+            self.Holograms[Index]:setParent( self.Holograms[ 1 ] )
+            
+        end
+        
+    end
+    
+    self.Holograms[Index]:setRenderBounds( self.RenderBoundMin, self.RenderBoundMax )
+    
+end
+
+function Model:HologramRender( Callback, ModelID )
+    
+    if not ModelID then ModelID = -1 end
+    
+    self:MeshData( function()
+        
+        if not self.Holograms then self.Holograms = {} end
+        
+        if ModelID != -1 then
+            
+            self:CreateHologram( ModelID, self.Meshs[ ModelID ], false )
+            
+            self.Main = self.Holograms[ModelID]
+            
+            Callback( self.Main )
+            
+            return
+        end
+        
+        for Index, Mesh in ipairs( self.Meshs ) do
+            
+            self:CreateHologram( Index, Mesh, true )
+            
+        end
+        
+        self.Main = self.Holograms[1]
+        
+        Callback( self.Main )
+        
+    end)
+   
+end
+
+// Add obj file rendering

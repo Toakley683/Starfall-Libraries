@@ -1,0 +1,227 @@
+--@name portal_library
+--@author toakley682
+--@shared
+
+if CLIENT then
+    
+    Portals = class( "Portals" )
+    
+    function Portals:initialize()
+        
+        self.FPS = 60
+        
+        self.RenderOneOnly = false
+        
+        self.MaxUsage = 0.5
+        self.MinUsage = 0.4
+        
+        self.AreSolid = true
+        
+        self.MaximumDistance = 400
+        
+        self.Screens = {}
+        self.ScreenMaterials = {}
+        
+        self.PortalInformation = {}
+        
+        self.RenderFrames = {}
+        self.RenderThreads = {}
+        
+    end
+    
+    function Portals:setup()
+    
+        self.ScreenMaterials[1] = self:setupMaterial( 1 )
+        self.ScreenMaterials[2] = self:setupMaterial( 2 )
+    
+    end
+    
+    function Portals:setupMaterial( ID )
+    
+        local viewRTName = table.address( self ).."portal-view-rtID"..ID
+        
+        render.createRenderTarget( viewRTName )
+        
+        local ViewMat = material.create( "gmodscreenspace" )
+        ViewMat:setTextureRenderTarget("$basetexture", viewRTName )
+
+        self.scrW, self.scrH = render.getGameResolution()
+        
+        local OtherPortalID
+        
+        if ID == 1 then OtherPortalID = 2 end
+        if ID == 2 then OtherPortalID = 1 end
+        
+        local ViewHookName = "toaks-portalviewhook-OID:"..table.address( self ).."-PID:"..ID
+        
+        self.RenderFrames[ID] = 0
+        
+        fps_delta = 1 / self.FPS
+        
+        hook.add( "renderscene", ViewHookName, function( realEyePos, realEyeAng )
+            
+            try( function()
+            
+            if not self.Screens[ ID ] then return end
+            if not self.Screens[ ID ]:getPhysicsObject() then return end
+            
+            if self.Screens[ ID ]:getColor()[4] == 0 then return end
+            
+            if not self.Screens[ OtherPortalID ] then return end
+            if not self.Screens[ OtherPortalID ]:getPhysicsObject() then return end
+            
+            if self.RenderOneOnly then
+                
+                if 
+                    self.Screens[ ID ]:getPos():getDistance( realEyePos ) >
+                    self.Screens[ OtherPortalID ]:getPos():getDistance( realEyePos )
+                then return end
+                
+            end
+            
+            if realEyePos:getDistance( self.Screens[ ID ]:getPos() ) > self.MaximumDistance then return end
+            
+            if self.RenderFrames[ID] > timer.systime() then return end
+            self.RenderFrames[ID] = timer.systime() + fps_delta
+        
+            if not self.RenderThreads[ID] then
+            
+                self.RenderThreads[ID] = coroutine.create( function()
+                    
+                    if 
+                        isValid( self.Screens[ ID ] ) and
+                        isValid( self.Screens[ OtherPortalID ] )
+                    then
+                        
+                        render.setFilterMag( 1 )
+                        render.setFilterMin( 1 )
+                        
+                        self:renderPortal( viewRTName, ID, OtherPortalID, self.Screens[ ID ], self.Screens[ OtherPortalID ], Aspect, realEyePos, realEyeAng )
+                        
+                    end
+                    
+                    if cpuAverage() > cpuMax() * self.MaxUsage then
+                        
+                        coroutine.yield()
+                        
+                    end
+                    
+                end)
+                
+            end
+            
+            if coroutine.status( self.RenderThreads[ID] )=="suspended" and cpuAverage() < cpuMax() * self.MinUsage then
+                
+                coroutine.resume( self.RenderThreads[ID] )
+                
+            end
+            
+            if coroutine.status( self.RenderThreads[ID] )=="dead" then
+                
+                self.RenderThreads[ID] = nil
+                
+            end
+            
+            end)
+        
+        end)
+        
+        hook.add( "render", "ToaksPortalLibary-" .. viewRTName, function()
+            
+            if not isValid( self.Screens[1] ) and self.Screens[2] != render.getScreenEntity() then self.Screens[1] = render.getScreenEntity() return end
+            if not isValid( self.Screens[2] ) and self.Screens[1] != render.getScreenEntity() then self.Screens[2] = render.getScreenEntity() return end
+            
+            if render.getScreenEntity() != self.Screens[ID] then return end
+            
+            if eyePos():getDistance( render.getScreenEntity():getPos() ) > self.MaximumDistance then return end
+            
+            render.pushViewMatrix( { type = "2D" } )
+            render.setMaterial( ViewMat )
+            render.setColor( Color( 255, 255, 255 ) )
+            render.drawTexturedRect( self.scrW, 0, -self.scrW, self.scrH )
+            render.popViewMatrix()
+            
+        end)
+        
+        return Mat
+        
+    end
+    
+    function Portals:renderPortal( RTName, ID, OtherID, Portal, CameraPortal, AspectRatio, realEyePos, realEyeAng )
+        
+        if render.isInRenderView() == false then
+            
+            render.selectRenderTarget( RTName )
+            render.enableClipping( true )
+            
+            local clipNormal = CameraPortal:getUp()
+            render.pushCustomClipPlane( clipNormal, CameraPortal:getPos():dot( clipNormal ) )
+            
+            local localOrigin = Portal:worldToLocal( realEyePos )
+            local reflectedOrigin = CameraPortal:localToWorld( localOrigin * Vector( 1, 1, -1 ) )
+            
+            local localAng = Portal:worldToLocalAngles( realEyeAng )
+            local reflectedAngle = CameraPortal:localToWorldAngles( Angle( -localAng.p, localAng.y, -localAng.r + 180 ) )
+            
+            render.renderView({
+                origin = reflectedOrigin,
+                angles = reflectedAngle,
+                aspectratio = self.scrW / self.scrH,
+                x = 0,
+                y = 0,
+                w = 1024,
+                h = 1024,
+                drawviewmodel = false,
+                drawviewer = true,
+            })
+            
+            render.popCustomClipPlane()
+            
+            render.selectRenderTarget()
+            
+        end
+            
+    end
+    
+    function Portals:setPortal( ID, Position, Angle, Model, Parent )
+        
+        self.PortalInformation[ID] = { Index=table.address( self ), ID=ID, Pos=Position, Ang=Angle, Model=Model, Solid=self.AreSolid, Parent=Parent }
+        
+        if player() != owner() then return end
+        
+        net.start( "__PortalLibary-NewScreen" )
+        net.writeTable( self.PortalInformation[ID] )
+        net.send()
+        
+    end
+    
+else
+    
+    PortalRegister = class( "PortalRegister" )
+    
+    function PortalRegister:initialize( Func )
+        
+        self.Screens = {}
+        
+        net.receive( "__PortalLibary-NewScreen", function( _, Plr )
+            
+            if Plr != owner() then return end
+            
+            local Data = net.readTable()
+            
+            local Screen = prop.createComponent( Data.Pos, Data.Ang, "starfall_screen", Data.Model, true )
+            Screen:setSolid( Data.Solid )
+            Screen:setColor( Color( 255, 255, 255, 1 ) )
+            Screen:linkComponent( chip() )
+            
+            Func( Screen, Data )
+            
+            Screen:setParent( Data.Parent )
+            
+            self.Screens[ table.count( self.Screens ) + 1 ] = Screen
+            
+        end)
+        
+    end
+    
+end

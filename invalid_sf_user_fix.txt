@@ -1,0 +1,54 @@
+--@name invalid sf user fix
+--@author Ax25 :3
+--@client
+
+local oldTimer = table.copy(timer)
+local oldNet = table.copy(net)
+
+timer = {
+    __index = function(self, key)
+        return oldTimer[key]
+    end
+}
+net = {
+    __index = function(self, key)
+        return oldNet[key]
+    end
+}
+
+setmetatable(timer, timer)
+setmetatable(net, net)
+
+function detourOwnerCheck(func, tbl, key)
+    
+    tbl[key] = function(...)
+
+        if owner():isValid() then
+            func(...)
+        end
+        
+    end
+    
+end
+
+detourOwnerCheck(oldTimer.simple, timer, "simple")
+detourOwnerCheck(oldTimer.create, timer, "create")
+detourOwnerCheck(oldTimer.getTimersLeft, timer, "getTimersLeft")
+
+detourOwnerCheck(oldNet.start, net, "start")
+detourOwnerCheck(oldNet.send, net, "send")
+detourOwnerCheck(oldNet.writeAngle, net, "writeAngle")
+detourOwnerCheck(oldNet.writeBit, net, "writeBit")
+detourOwnerCheck(oldNet.writeBool, net, "writeBool")
+detourOwnerCheck(oldNet.writeColor, net, "writeColor")
+detourOwnerCheck(oldNet.writeData, net, "writeData")
+detourOwnerCheck(oldNet.writeDouble, net, "writeDouble")
+detourOwnerCheck(oldNet.writeEntity, net, "writeEntity")
+detourOwnerCheck(oldNet.writeInt, net, "writeInt")
+detourOwnerCheck(oldNet.writeMatrix, net, "writeMatrix")
+detourOwnerCheck(oldNet.writeStream, net, "writeStream")
+detourOwnerCheck(oldNet.writeString, net, "writeString")
+detourOwnerCheck(oldNet.writeTable, net, "writeTable")
+detourOwnerCheck(oldNet.writeType, net, "writeType")
+detourOwnerCheck(oldNet.writeUInt, net, "writeUInt")
+detourOwnerCheck(oldNet.writeVector, net, "writeVector")

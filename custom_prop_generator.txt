@@ -1,0 +1,271 @@
+--@name Custom Prop Generator
+--@author toakley682
+--@shared
+
+if CLIENT then
+    
+    net.receive( "SaveFileOnClient", function()
+        
+        local Data = net.readTable()
+        
+        local NewLines = true
+        
+        local Directory = "custom_prop_exports"
+        
+        local UUID = os.time()
+        local InitialString = json.encode( Data, false )
+        
+        local A = string.replace( InitialString, '"[', "Vector(" )
+        local B = string.replace( A, ']"', ")" )
+        local C = string.replace( B, '[', "{" )
+        local D = string.replace( C, ']', "}" )
+        local E = string.replace( D, ' ', "," )
+        
+        local FinalString = E
+        
+        if NewLines == true then
+            
+            local F = string.replace( E, '),', "),\n" )
+            local G = string.replace( F, '{', "{\n" )
+            local H = string.replace( G, ")},{", ")\n},\n{" )
+            local I = string.replace( H, "}}", "\n}\n}" )
+            
+            FinalString = I
+            
+        end
+               
+        file.createDir( Directory )
+        file.write( Directory.."/custom-prop-"..UUID..".txt", FinalString )
+        
+    end)
+    
+else
+
+    Creator = class( "Creator" )
+    
+    function Creator:initialize()
+        
+        self.Origin = chip():getPos()
+        self.Mesh = {}
+        
+        self.Entities = {}
+        
+        self.PropSpawnQueueIndex = 1
+        
+        self.Mass = 1000
+        self.Draw = false
+        
+    end
+    
+    function Creator:AddSlantCube( Origin, Size1, Size2, Angles, Angles2 )
+        
+        if not Angles then Angles = Angle() end
+        if not Angles2 then Angles2 = Angles end
+        
+        local O = Origin
+        local S1 = ( Size1 / 2 ):getRotated( Angles )
+        local S2 = ( Size2 / 2 ):getRotated( Angles2 )
+        
+        local Convex = {
+            O + Vector( S1[1], S1[2], S1[3] ),     // 0, 0, 0
+            O + Vector( -S1[1], S1[2], S1[3] ),    // 1, 0, 0
+            O + Vector( -S1[1], -S1[2], S1[3] ),   // 1, 1, 0
+            O + Vector( S1[1], -S1[2], S1[3] ),    // 0, 1, 0
+            O + Vector( S2[1], S2[2], -S2[3] ),     // 0, 0, 1
+            O + Vector( -S2[1], S2[2], -S2[3] ),     // 1, 0, 1
+            O + Vector( -S2[1], -S2[2], -S2[3] ),     // 1, 1, 1
+            O + Vector( S2[1], -S2[2], -S2[3] )      // 0, 1, 1
+        }
+        
+        self.Mesh[ table.count( self.Mesh ) + 1 ] = Convex
+        
+    end
+    
+    function NVec( Origin, Size, Angles )
+        
+        return Origin + localToWorld( Size, Angle(), Vector(), Angles )
+        
+    end
+    
+    function Creator:AddCube( Origin, Size, Angles )
+        
+        if not Angles then Angles = Angle() end
+        
+        local O = Origin
+        local S = Size / 2
+        
+        local Convex = {
+            NVec( O, Vector( S[1], S[2], S[3] ), Angles ), // 0, 0, 0
+            NVec( O, Vector( -S[1], S[2], S[3] ), Angles ), // 1, 0, 0
+            NVec( O, Vector( -S[1], -S[2], S[3] ), Angles ), // 1, 1, 0
+            NVec( O, Vector( S[1], -S[2], S[3] ), Angles ), // 0, 1, 0
+            NVec( O, Vector( S[1], S[2], -S[3] ), Angles ), // 0, 0, 1
+            NVec( O, Vector( -S[1], S[2], -S[3] ), Angles ), // 1, 0, 1
+            NVec( O, Vector( -S[1], -S[2], -S[3] ), Angles ), // 1, 1, 1
+            NVec( O, Vector( S[1], -S[2], -S[3] ), Angles ), // 0, 1, 1
+        }
+        
+        self.Mesh[ table.count( self.Mesh ) + 1 ] = Convex
+        
+    end
+    
+    function Creator:AddCone( Origin, Size, Fidelity, TopCone, Angles, TopFidelity, TopSize )
+        
+        if Angles == nil then Angles = Angle() end
+        if TopSize == nil then TopSize = Vector( 1 ) end
+        if TopFidelity == nil then TopFidelity = Fidelity end
+        if TopCone == nil then TopCone = true end
+        
+        local TC = 1
+        if TopCone == false then TC = -1 end
+        
+        local O = Origin
+        local S = Size / 2
+        
+        local Pi2 = 2 * math.pi
+        
+        local Convex = {}
+        for I = 1, Fidelity do
+            
+            local X = math.cos( ( I * Pi2 ) / Fidelity ) * S.x
+            local Y = math.sin( ( I * Pi2 ) / Fidelity ) * S.y
+            local Z = -S.z * TC
+            
+            Convex[ table.count( Convex ) + 1 ] = NVec( O, Vector( X, Y, Z ), Angles )
+        end
+        
+        for I = 1, TopFidelity do
+            
+            local X = math.cos( ( I * Pi2 ) / TopFidelity ) * TopSize.x
+            local Y = math.sin( ( I * Pi2 ) / TopFidelity ) * TopSize.y
+            local Z = S.z * TC
+            
+            Convex[ table.count( Convex ) + 1 ] = NVec( O, Vector( X, Y, Z ), Angles )
+        end
+        
+        self.Mesh[ table.count( self.Mesh ) + 1 ] = Convex
+        
+    end
+    
+    function Creator:AddCylinder( Origin, Size, Fidelity, Angles )
+        
+        if not Angles then Angles = Angle() end
+        if not Fidelity then error( "No cylinder fidelity given" ) end
+        
+        local O = Origin
+        local S = Size / 2
+        
+        local Pi2 = 2 * math.pi
+        
+        local Convex = {}
+        for I = 1, Fidelity do
+            
+            local X = math.cos( ( I * Pi2 ) / Fidelity ) * S.x
+            local Y = math.sin( ( I * Pi2 ) / Fidelity ) * S.y
+            local Z = -S.z
+            
+            Convex[ table.count( Convex ) + 1 ] = NVec( O, Vector( X, Y, Z ), Angles )
+            Convex[ table.count( Convex ) + 1 ] = NVec( O, Vector( X, Y, -Z ), Angles )
+        end
+        
+        self.Mesh[ table.count( self.Mesh ) + 1 ] = Convex
+        
+    end
+    
+    function Creator:AddConvex( Convex )
+        
+        self.Mesh[ table.count( self.Mesh ) + 1 ] = Convex
+        
+    end
+    
+    function TableRange( Table, Min, Max )
+        
+        local Output = {}
+        
+        local SI = 0
+        
+        for I = Min, Max, 1 do
+            
+            SI = SI + 1
+            
+            
+            Output[ SI ] = Table[ I ]
+            
+        end
+        
+        return Output
+        
+    end
+    
+    function Creator:Finalize( Function )
+        
+        local MaximumConvexes = 10
+        
+        self.PropsRequired = math.ceil( table.count( self.Mesh ) / MaximumConvexes )
+        
+        self.PropSpawnQueue = {}
+        
+        for PropSpawn = 1, self.PropsRequired do
+            
+            local Data = TableRange( self.Mesh, MaximumConvexes * ( PropSpawn - 1 ) + 1, MaximumConvexes * PropSpawn )
+            
+            self.PropSpawnQueue[ PropSpawn ] = Data
+            
+        end
+        
+        local Name = table.address( self )..":__PropSpawn__:"
+        
+        hook.add( "tick", Name, function()
+            
+            if self.PropSpawnQueueIndex == nil then self.PropSpawnQueueIndex = 1 end
+            if prop.canSpawn() == false then return end
+            
+            local Data = self.PropSpawnQueue[ self.PropSpawnQueueIndex ]
+            
+            if Data == nil then return end
+            
+            local E = prop.createCustom( self.Origin, Angle(), Data, true )
+            E:setMass( self.Mass )
+            E:setNoDraw( !self.Draw )
+            
+            if self.Draw == false then
+                
+                E:setColor( Color( 255, 255, 255, 0 ) )
+                
+            end
+            
+            self.Entities[ table.count( self.Entities ) + 1 ] = E
+            
+            self.PropSpawnQueue[ self.PropSpawnQueueIndex ] = nil
+            
+            self.PropSpawnQueueIndex = self.PropSpawnQueueIndex + 1
+            
+            if table.count( self.PropSpawnQueue ) == 0 then
+                
+                self.PropSpawnQueueIndex = nil
+                
+                Function()
+                
+                hook.remove( "tick", Name )
+                
+            end
+            
+        end)
+        
+    end
+    
+    function Creator:Export()
+        
+        hook.add( "ClientInitialized", "", function( Plr )
+            
+            if Plr != owner() then return end
+            
+            net.start( "SaveFileOnClient" )
+            net.writeTable( self.Mesh )
+            net.send( owner() )
+            
+        end)
+        
+    end
+
+end

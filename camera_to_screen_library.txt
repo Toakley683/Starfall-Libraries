@@ -1,0 +1,323 @@
+--@name camera_to_screen_library
+--@author toakley682
+--@shared
+--@include https://raw.githubusercontent.com/Jacbo1/Public-Starfall/main/SafeNet/safeNet.lua as SafeNet
+
+local net = require( "SafeNet" )
+
+
+
+function AwaitUntil( Await, Callback, UID )
+    
+    local TimerName = "__AwaitUnitl:" .. UID
+    
+    if timer.exists( TimerName ) then timer.remove( TimerName ) end
+    
+    timer.create( TimerName, 0.1, 0, function()
+        
+        if Await() == false then return end
+        Callback()
+        timer.remove( TimerName )
+        
+    end)
+    
+end
+
+if CLIENT then
+    
+    __Camera = class( "__Camera" )
+    
+    function __Camera:initialize( Camera, Screen, Data )
+        
+        self.Camera = Camera
+        self.Screen = Screen
+        
+        self.Data = Data
+        
+        self.FPS = self.Data.FPS
+        self.FPSDelta = 1 / self.FPS
+        
+        self.Dimensions = self.Data.Dimensions
+        
+        render.setScreenDimensions(
+            self.Screen,
+            0,
+            0,
+            self.Dimensions.x,
+            self.Dimensions.y
+        )
+        
+        self.LastFrameCurtime = 0
+        
+        self.Camera:setNoDraw( !Data.Draw )
+        
+        self.ScrW, self.ScrH = render.getResolution()
+        
+        self.RTName = ( table.address( self ) .. ":ScreenMat" )
+        render.createRenderTarget( self.RTName )
+        
+        self.ScreenMaterial = material.create( "gmodscreenspace" )
+        self.ScreenMaterial:setTextureRenderTarget( "$basetexture", self.RTName )
+        self.ScreenMaterial:setInt( "$flags", 0 )
+        
+        self:__Render()
+        self:__RenderScene()
+        
+    end
+    
+    function __Camera:__Render()
+        
+        if self.HasRenderHook == true then return end
+        self.HasRenderHook = true
+        
+        hook.add( "render", "Render:" .. self.RTName, function()
+            
+            if render.getScreenEntity() != self.Screen then return end
+            
+            render.setColor( Color( 118, 68, 171 ) )
+            render.drawRect( 0, 0, 512, 512 )
+            
+            render.pushViewMatrix( { type = "2D" } )
+            render.setMaterial( self.ScreenMaterial )
+            render.setColor( Color( 255, 255, 255 ) )
+            render.drawTexturedRect( self.ScrW, 0, -self.ScrW, self.ScrH )
+            render.popViewMatrix()
+            
+        end)
+        
+    end
+    
+    function __Camera:__RenderScene()
+        
+        if self.HasRenderSceneHook == true then return end
+        self.HasRenderSceneHook = true
+        
+        hook.add( "renderscene", self.RTName, function( EyePosition, EyeAngles )
+            
+            if cpuAverage() > cpuMax() * 0.8 then return end
+            
+            self:__RenderView( EyePosition, EyeAngles )
+            
+        end)
+        
+    end
+    
+    function __Camera:__RenderView( EyePosition, EyeAngles )
+        
+        if not self.Screen then return end
+        if not self.Screen:isValid() then return end
+        
+        if not self.Camera then return end
+        if not self.Camera:isValid() then return end
+        
+        if self.LastFrameCurtime > timer.curtime() then return end
+        self.LastFrameCurtime = timer.curtime() + self.FPSDelta
+        
+        render.selectRenderTarget( self.RTName )
+        render.enableClipping( true )
+        
+        local LocalOrigin = self.Screen:worldToLocal( EyePosition )
+        local ReflectedOrigin = self.Camera:localToWorld( LocalOrigin * Vector( 1, 1, -1 ) )
+        
+        local LocalAng = self.Screen:worldToLocalAngles( EyeAngles )
+        local ReflectedAngle = self.Camera:localToWorldAngles( Angle( -LocalAng.p, LocalAng.y, -LocalAng.r + 180 ) )
+        
+        local clipNormal = self.Camera:getUp()
+        render.pushCustomClipPlane( clipNormal, ( self.Camera:getPos() + ( clipNormal * ( self.Camera:obbSize()[1] * 0.5 ) ) ):dot( clipNormal ) )
+        
+        render.renderView({
+            origin = ReflectedOrigin,
+            angles = ReflectedAngle,
+            aspectratio = self.ScrW / self.ScrH,
+            x = 0,
+            y = 0,
+            w = 1024,
+            h = 1024,
+            drawviewmodel = false,
+            drawviewer = true,
+        })
+        
+        render.popCustomClipPlane()
+        render.selectRenderTarget()
+        
+    end
+    
+    safeNet.start( "__AwaitCameraData" )
+    safeNet.send()
+    
+    safeNet.receive( "__CameraInitialize", function()
+        
+        local Information = safeNet.readTable()
+        
+        hook.add( "NetworkEntityCreated", "__AwaitCameraProps", function( Ent )
+            
+            if Ent:entIndex() == Information.CameraIndex then Information.CameraProp = Ent end
+            if Ent:entIndex() == Information.ScreenIndex then Information.ScreenProp = Ent end
+            
+        end)
+        
+        AwaitUntil(
+            function()
+                
+                if not Information.CameraProp then return false end
+                if not Information.CameraProp:isValid() then return false end
+                
+                if not Information.ScreenProp then return false end
+                if not Information.ScreenProp:isValid() then return false end
+                
+                return true
+                
+            end,
+            function()
+                
+                __Camera( Information.CameraProp, Information.ScreenProp, Information )
+                hook.remove( "NetworkEntityCreated", "__AwaitCameraProps" )
+                
+            end,
+            "CameraPropsInitializeAwait"
+        )
+        
+    end)
+    
+else
+    
+    local Clients = {}
+    
+    local Initialized = {}
+    
+    hook.add( "ClientInitialized", "ClientInit", function( Player )
+        
+        Initialized[ Player:getSteamID() ] = true
+        
+    end)
+    
+    Camera = class( "Camera" )
+    
+    function Camera:initialize( FPS, Draw )
+        
+        self.Index = table.address( self )
+        
+        self.RequirementsMet = false
+        self.PlayerQueue = {}
+        self.SendData = {}
+        
+        self.FPS = FPS
+        self.Draw = Draw
+        
+        safeNet.receive( "__AwaitCameraData", function( _, Player )
+            
+            AwaitUntil(
+                function()
+                    
+                    if self.RequirementsMet == false then return false end
+                    if Initialized[ Player:getSteamID() ] != true then return false end
+                    
+                    return true
+                    
+                end,
+                function()
+                    
+                    safeNet.start( "__CameraInitialize" )
+                    safeNet.writeTable( self.SendData )
+                    safeNet.send( Player )
+                    
+                end,
+                Player:getSteamID() .. ":Initialized"
+            )
+            
+        end)
+        
+    end
+    
+    function Camera:CheckRequirements()
+        
+        if not self.Camera then return end
+        if not self.Screen then return end
+        
+        self.SendData = {}
+        
+        self.SendData[ "Index" ] = self.Index
+        
+        self.SendData[ "CameraProp" ] = self.Camera
+        self.SendData[ "CameraIndex" ] = self.Camera:entIndex()
+        
+        self.SendData[ "ScreenProp" ] = self.Screen
+        self.SendData[ "ScreenIndex" ] = self.Screen:entIndex()
+        
+        self.SendData[ "Dimensions" ] = self.Dimensions
+        
+        self.SendData[ "FPS" ] = self.FPS
+        self.SendData[ "Draw" ] = self.Draw
+        
+        self.RequirementsMet = true
+        
+    end
+    
+    function Camera:setCamera( Position, Angle, Parent )
+        
+        self.Camera = prop.create( Position, Angle, "models/hunter/plates/plate.mdl", true )
+        if Parent then self.Camera:setParent( Parent ) end
+        
+        self:CheckRequirements()
+        
+    end
+    
+    function Camera:EyeTraceThroughCamera( Player )
+        
+        if not self.RequirementsMet then return nil end
+        
+        local LocalOrigin = self.Screen:worldToLocal( Player:getShootPos() )
+        local ReflectedOrigin = self.Camera:localToWorld( LocalOrigin * Vector( 1, 1, -1 ) )
+        
+        local LocalAng = self.Screen:worldToLocalAngles( Player:getEyeAngles() )
+        local ReflectedAngle = self.Camera:localToWorldAngles( Angle( -LocalAng.p, LocalAng.y, -LocalAng.r + 180 ) )
+        
+        if LocalOrigin.z <= 0 then return end
+        
+        local OnScreenOrigin = 
+            ( 
+                ReflectedOrigin + 
+                ( 
+                    ReflectedAngle:getForward() * 
+                    ( 
+                        math.abs( LocalOrigin.z /
+                        ReflectedAngle:getForward().x ) 
+                    ) 
+                ) 
+            ) + self.Camera:getForward()
+        
+        local OnScreenLocal = self.Camera:worldToLocal( OnScreenOrigin )
+        
+        local MaxUnits = self.SendData[ "Dimensions" ] / 2
+        
+        if math.abs( OnScreenLocal.x ) > MaxUnits.y then return end
+        if math.abs( OnScreenLocal.y ) > MaxUnits.x then return end
+        
+        local Trace = trace.line( OnScreenOrigin, OnScreenOrigin + ReflectedAngle:getForward() * 1000000, { self.Camera, self.Screen } )
+        
+        Trace.Origin = OnScreenOrigin
+        Trace.Direction = ReflectedAngle:getForward()
+        
+        return Trace
+        
+    end
+    
+    function Camera:setScreen( Position, Angle, Dimensions, Parent )
+        
+        self.Dimensions = Dimensions
+        
+        self.ScreenCollisions = prop.create( Position, Angle, "models/hunter/plates/plate1x1.mdl", true )
+        self.ScreenCollisions:setNoDraw( true )
+        
+        self.Screen = prop.createComponent( Position, Angle, "starfall_screen", "models/bull/dynamicbuttonsf.mdl", true )
+        self.Screen:setColor( Color( 255, 255, 255, 1 ) )
+        self.Screen:linkComponent( chip() )
+        self.Screen:setParent( self.ScreenCollisions )
+        
+        if Parent then self.ScreenCollisions:setParent( Parent ) end
+        
+        self:CheckRequirements()
+        
+    end
+    
+end

@@ -1,0 +1,228 @@
+--@name Sound Library
+--@author toakley682
+--@shared
+--@include https://raw.githubusercontent.com/Jacbo1/Public-Starfall/main/SafeNet/safeNet.lua as SafeNet
+local net = require("SafeNet")
+
+if CLIENT then
+    
+    SongLoader = class( "SongLoader" )
+    
+    function SongLoader:initialize()
+        
+        self.Address = table.address( self )
+        
+        self.Queue = {}
+        self.QueueLookup = {}
+        
+        self.Songs = {}
+        self.SongList = {}
+        
+        self.Volume = 1
+        self.MinimumDistance = 400
+        self.MaximumDistance = 700
+        
+        self.CollectFFT = false
+        self.FFTSample = 1
+        self.FFT = {}
+        
+        self.SongPlaying = nil
+        
+        safeNet.receive( "LoadSongs", function()
+            
+            local SongData = safeNet.readTable()
+            
+            printConsole( "Queue index at '" .. "'" )
+            
+            for I, Data in ipairs( SongData ) do
+                
+                local Index = table.count( self.Queue ) + 1
+                
+                self.Queue[ Index ] = { ID=Data.ID, URL=Data.URL }
+                self.QueueLookup[ Data.ID ] = Index
+                
+            end
+            
+        end)
+        
+        safeNet.receive( "PlaySong", function()
+            
+            local SongData = safeNet.readTable()
+            
+            local Time = timer.curtime() - SongData.StartTime
+            
+            self:PlaySong( SongData.Index, SongData.Position, SongData.Parent, Time )
+            
+        end)
+        
+        timer.create( self.Address .. ":SongLoader", 0.25, 0, function()
+            
+            if not self.Queue[1] then return end
+            
+            local SongData = self.Queue[1]
+            
+            bass.loadURL( SongData.URL, "3d noblock", function( Bass )
+                
+                self.Songs[ SongData.ID ] = Bass
+                self.SongList[ table.count( self.Songs ) ] = SongData.ID
+                
+            end)
+            
+            self.Queue[1] = nil
+            self.QueueLookup[ SongData.ID ] = nil
+            
+        end)
+        
+    end
+    
+    function SongLoader:SetVolumeByDistance()
+        
+        if not self.SongPlaying then return end
+        
+        self.Distance = render.getEyePos():getDistance( self.SongPlaying:getPos() )
+        
+        DFactor = math.clamp( self.Distance, self.MinimumDistance, self.MaximumDistance )
+        DPercent = 1 - ( ( DFactor - self.MinimumDistance ) / ( self.MaximumDistance - self.MinimumDistance ) )
+        
+        local Volume = DPercent * self.Volume
+        
+        self.SongPlaying:setVolume( Volume )
+        
+    end
+    
+    function SongLoader:PlaySong( Index, Position, Parent, Time )
+        
+        self.LocalPosition = nil
+        
+        if Time == nil then Time = 0 end
+        
+        timer.create( "SongPlay:" .. Index, 0.1, 0, function()
+            
+            if self.SongPlaying != nil then
+                
+                self.SongPlaying:pause()
+                self.SongPlaying = nil
+                
+            end
+            
+            if self.QueueLookup[ Index ] != nil then return end // Wait until sound has been loaded
+            if not self.Songs[ Index ] then return end
+            
+            self.SongPlaying = self.Songs[ Index ]
+            
+            self.Songs[ Index ]:setPos( Position )
+            self.Songs[ Index ]:setTime( Time, true )
+            self.Songs[ Index ]:play()
+            
+            hook.remove( "think", self.Address .. ":SongThink" )
+            
+            hook.add( "think", self.Address .. ":SongThink", function()
+                
+                self:SetVolumeByDistance()
+                
+                if Parent then
+                    
+                    if self.LocalPosition == nil then self.LocalPosition = worldToLocal( Position, Angle(), Parent:getPos(), Parent:getAngles() ) end
+                    
+                    self.Songs[ Index ]:setPos( localToWorld( self.LocalPosition, Angle(), Parent:getPos(), Parent:getAngles() ) )
+                    
+                end
+                
+                if self.CollectFFT == true then
+                    
+                    self.FFT = self.Songs[ Index ]:getFFT( self.FFTSample )
+                    
+                end
+                
+            end)
+            
+            timer.remove( "SongPlay:" .. Index )
+            
+        end)
+        
+    end
+    
+    function SongLoader:RequestSong( Index )
+        
+        
+        
+    end
+    
+else
+    
+    Song = class( "Song" )
+    ServerSoundManager = class( "ServerSoundManager")
+    
+    function Song:initialize( URL )
+        
+        self.SongURL = URL
+        
+    end
+    
+    function ServerSoundManager:initialize()
+        
+        self.Songs = {}
+        self.SongLookup = {}
+        
+        //self.MinimumDistance = 400
+        //self.MaximumDistance = 1500
+        
+    end
+    
+    function ServerSoundManager:LoadSong( Song )
+        
+        local Index = table.count( self.Songs ) + 1
+        
+        if self.Songs[ Index ] == nil then self.Songs[ Index ] = {} end
+        self.Songs[ Index ] = { ID = table.address( Song ), URL = Song.SongURL }
+        self.SongLookup[ table.address( Song ) ] = Index
+        
+    end
+    
+    function ServerSoundManager:LoadSongs( Songs )
+        
+        for I, Data in pairs( Songs ) do
+            
+            self:LoadSong( Data )
+            
+        end
+        
+    end
+    
+    function ServerSoundManager:UpdateClientsSongs()
+        
+        safeNet.start( "LoadSongs" )
+        safeNet.writeTable( self.Songs )
+        safeNet.send()
+        
+    end
+    
+    function ServerSoundManager:PlaySongIndex( ID, Position, Parent )
+        
+        if not Position then Position = Vector() end
+        
+        self.SongPlayCurtime = timer.curtime()
+        
+        safeNet.start( "PlaySong" )
+        safeNet.writeTable( { Index=self.Songs[ID].ID, Position = Position, StartTime=self.SongPlayCurtime, Parent=Parent } )
+        safeNet.send()
+        
+        hook.remove( "ClientInitialized", table.address( self )..":SongSend" )
+        
+        hook.add( "ClientInitialized", table.address( self )..":SongSend", function( Player )
+            
+            safeNet.start( "PlaySong" )
+            safeNet.writeTable( { Index=self.Songs[ID].ID, Position = Position, StartTime=self.SongPlayCurtime, Parent=Parent } )
+            safeNet.send()
+            
+        end)
+        
+    end
+    
+    function ServerSoundManager:PlaySong( Song, Position, Parent )
+        
+        self:PlaySongIndex( self.SongLookup[ table.address( Song ) ], Position, Parent )
+        
+    end
+    
+end

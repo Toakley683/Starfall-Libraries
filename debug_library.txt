@@ -1,0 +1,47 @@
+--@name debug_library
+--@author
+--@shared
+--@include libs/particle_library.txt
+
+require( "libs/particle_library.txt" )
+
+if CLIENT then
+    
+    local RenderLibrary = ParticleEngine( 500 )
+    RenderLibrary.ParticleMaterial = material.load( "particle/fire" )
+    
+    RenderLibrary.ParticleStartSize = 3
+    RenderLibrary.ParticleEndSize = 3
+    
+    RenderLibrary.ParticleStartAlpha = 255
+    RenderLibrary.ParticleEndAlpha = 255
+    
+    RenderLibrary.ParticleStartLength = 0
+    RenderLibrary.ParticleEndLength = 0
+    
+    RenderLibrary.ParticleLifetime = 50
+    
+    RenderLibrary:Setup()
+    
+    Debug = class( "Debug" )
+    
+    function Debug.RenderPointParticle( Point )
+        
+        
+        local Callback = function( Position )
+            
+            local Data = {}
+            
+            Data.StartPosition = Point
+            
+            return Data
+        
+        end
+        
+        RenderLibrary:NewParticle( Callback )
+        
+    end
+    
+    print( Debug.RenderPointParticle( owner():getShootPos() ) )
+    
+end

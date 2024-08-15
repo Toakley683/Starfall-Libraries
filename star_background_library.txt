@@ -1,0 +1,144 @@
+--@name Star Background Library
+--@author toakley682
+--@shared
+
+if CLIENT then
+    
+    Star = class( "Star" )
+    StarEffect = class( "StarEffect" )
+    
+    function Star:initialize( Effect )
+        
+        self.Effect = Effect
+        
+        self.X = 0
+        self.Y = 0
+        
+        self:Reset()
+        
+    end
+    
+    function Star:Reset()
+        
+        self.WindS = math.rand( 0.2, 1 )
+        
+        self.Scale = math.rand( self.Effect.Data.MinSize, self.Effect.Data.MaxSize )
+        
+        self.X = math.rand( self.Effect.X, self.Effect.X + self.Effect.W )
+        self.Y = math.rand( self.Effect.Y, self.Effect.Y + self.Effect.H )
+        
+        self.StartTime = timer.curtime()// + math.rand( 0.1, 16 )
+        
+        self.R = math.rand( 0, 360 )
+        
+    end
+    
+    function Star:Render()
+        
+        if self.StartTime > timer.curtime() then return end
+        
+        Dif = Vector(
+            self.Effect.Data.WindSpeed.x * self.WindS,
+            self.Effect.Data.WindSpeed.y
+        )
+        
+        self.X = self.X + Dif.x * timer.frametime()
+        self.Y = self.Y + Dif.y * timer.frametime()
+        
+        if
+            self.X > self.Effect.X + self.Effect.W + self.Scale or
+            self.X < self.Effect.X - self.Scale or
+            self.Y > self.Effect.Y + self.Effect.H + self.Scale
+        then
+            
+            // Out of bounds
+            self:Reset()
+            
+        end
+        
+        self.Poly = {}
+        
+        for I = 1, self.Effect.Data.Points * 2 do
+            
+            local A1 = math.rad( ( 360 / ( self.Effect.Data.Points * 2 ) * ( I - 0.5 ) ) + self.R )
+            
+            local Dist = 0
+            
+            if I % 2 == 0 then Dist = self.Scale end
+            if I % 2 != 0 then Dist = self.Scale / 2 end
+            
+            local X1 = math.cos( A1 ) * Dist
+            local Y1 = math.sin( A1 ) * Dist
+            
+            self.Poly[ table.count( self.Poly ) + 1 ] = {
+                x=self.X + X1,
+                y=self.Y + Y1
+            }
+            
+        end
+        
+        render.drawPoly( self.Poly )
+        
+    end
+    
+    function StarEffect:initialize( Count, X, Y, W, H )
+        
+        self.Count = Count
+        
+        self.X = X
+        self.Y = Y
+        self.W = W
+        self.H = H
+        
+        self.FPS = 60
+        self.FPSDelta = 1 / self.FPS
+        
+        self.NextFrameCurtime = 0
+        
+        self.Data = {}
+        
+        self.Data.MinSize = 5
+        self.Data.MaxSize = 10
+        
+        self.Data.Points = 5
+        
+        self.Data.WindSpeed = Vector( 0, 200 )
+        
+        self.Stars = {}
+        
+        for I = 1, self.Count do
+            
+            self.Stars[I] = Star( self )
+            
+        end
+        
+    end
+    
+    function StarEffect:Render()
+        
+        //if self.NextFrameCurtime >= timer.curtime() then return end
+        //self.NextFrameCurtime = timer.curtime() + self.FPSDelta
+        
+        for Index, Star in ipairs( self.Stars ) do
+            
+            Star:Render()
+            
+        end
+        
+    end
+    
+    function StarEffect:SetCharacteristic( Characteristic, Value )
+        
+        self.Data[ Characteristic ] = Value
+        
+        for Index, Star in ipairs( self.Stars ) do
+            
+            Star:Reset()
+            
+        end
+        
+    end
+    
+    local A = StarEffect( 1024, 0, 0, 1024, 1024 )
+    
+end

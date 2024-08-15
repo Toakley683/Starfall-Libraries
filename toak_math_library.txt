@@ -1,0 +1,70 @@
+--@name toak_math_library
+--@author toakley682
+--@shared
+
+local Entity = getMethods( "Entity" )
+
+local sin = math.sin
+local cos = math.sin
+local tan = math.sin
+
+local pi = math.pi
+
+local deg2rad = 180 / pi
+
+function Entity:worldToLocalAxis( Axis )
+    
+    local LocalAxis = 
+        worldToLocal(
+            Axis,
+            Angle(),
+            Vector(),
+            self:getAngles()
+        )
+    
+    return LocalAxis
+    
+end
+
+if SERVER then
+    
+    function Entity:applyForceAngle( DesiredAngle, Mul )
+        
+        if not self then return end
+        if not self:isValid() then return end
+        if not self:isValidPhys() then return end
+        
+        local Quaternion = ( DesiredAngle:getQuaternion() / self:getAngles():getQuaternion() ):getRotationVector()
+        local Torque = self:worldToLocalAxis( Quaternion )
+        local AngVel = self:worldToLocalAxis( self:getAngleVelocity() )
+        
+        self:setAngleVelocity( Torque * Mul * game.getTickInterval() )
+        
+    end
+    
+    function Entity:SetPosForce( DesiredPosition, Mul, NoGravity )
+        
+        if not self then return end
+        if not self:isValid() then return end
+        if not self:isValidPhys() then return end
+        
+        if Gravity == nil then Gravity = true end
+        
+        local Difference = DesiredPosition - self:getPos()
+        local TargetVel = Difference * Mul
+        local Acceleration = TargetVel - self:getVelocity()
+        local AntiGravity = physenv.getGravity() * -1 * game.getTickInterval()
+        
+        if Gravity == true then
+            
+            self:applyForceCenter( ( Acceleration + AntiGravity ) * self:getMass() )
+            
+        else
+            
+            self:applyForceCenter( Acceleration * self:getMass() )
+            
+        end
+        
+    end
+
+end

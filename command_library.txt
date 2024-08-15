@@ -1,0 +1,97 @@
+--@name command_library
+--@author
+--@shared
+
+if CLIENT then
+    
+    
+    
+else
+    
+    CommandManager = class( "CommandManager" )
+    Command = class( "Command" )
+    
+    function CommandManager:initialize( StarChar )
+        
+        if not StarChar then StarChar = "!" end
+        
+        self.StartChar = StarChar
+        self.Commands = {}
+        
+        self:HookSetup()
+        
+    end
+    
+    function CommandManager:HookSetup()
+        
+        self.Hook = ( table.address( self ) .. ":PlayerSay" )
+        
+        hook.add( "PlayerSay", self.Hook, function( Player, Text, IsTeam )
+            
+            if Player != owner() then return end
+            if string.startWith( Text, self.StartChar ) == false then return end
+            
+            return self:OnSay( Player, Text, IsTeam )
+            
+        end)
+        
+    end
+    
+    function CommandManager:OnSay( Player, Text, IsTeam )
+        
+        CheckText = string.setChar( Text, 1, "" )
+        local Explode = string.explode( " ", CheckText )
+        
+        for Index, CommandObj in ipairs( self.Commands ) do
+            
+            for _, CommandText in ipairs( CommandObj.Commands ) do
+                
+                if Explode[1] == CommandText then
+                    
+                    CommandObj.OnCall( Explode )
+                    return ""
+                    
+                end
+                
+            end
+            
+        end
+        
+        return Text
+        
+    end
+    
+    function CommandManager:AddCommand( Command )
+        
+        for Index, Com in ipairs( Command.Commands ) do
+            
+            if string.startWith( Com, self.StartChar ) == false then continue end
+            
+            Command.Commands[ Index ] = string.setChar( Command.Commands[ Index ], 1, "" )
+            
+        end
+        
+        self.Commands[ table.count( self.Commands ) + 1 ] = Command
+        
+    end
+    
+    function CommandManager:AddCommands( Commands )
+    
+        for Index, Command in ipairs( Commands ) do
+            
+            self:AddCommand( Command )
+            
+        end
+        
+    end
+    
+    function Command:initialize( Commands )
+        
+        self.OnCall = function() end
+        
+        self.Commands = Commands
+        
+    end
+    
+    
+end

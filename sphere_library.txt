@@ -1,0 +1,448 @@
+--@name sphere_library
+--@author toakley682
+--@shared
+--@include libs/particle_library.txt
+if CLIENT then
+    
+    require( "libs/particle_library.txt" )
+    Sphere = class( "Sphere" )
+    
+    local RenderLibrary = ParticleEngine( 0 )
+    RenderLibrary.ConsoleDebug = false
+    RenderLibrary.ThreeD = false
+    
+    RenderLibrary.ParticleMaterial = material.load( "particle/fire" )
+    
+    RenderLibrary.ParticleStartSize = 3
+    RenderLibrary.ParticleEndSize = 3
+    
+    RenderLibrary.ParticleStartAlpha = 255
+    RenderLibrary.ParticleEndAlpha = 255
+    
+    RenderLibrary.ParticleStartLength = 0
+    RenderLibrary.ParticleEndLength = 0
+    
+    RenderLibrary.ParticleLifetime = 25
+    
+    RenderLibrary:Setup()
+    
+    PI = math.pi
+    
+    function PointOnSphereToUV( Normal, Scale )
+        
+        local Longitude = math.atan2( Normal.z, -Normal.x ) + PI
+        local Latitude = math.atan( -Normal.y / Vector( Normal.x, Normal.z ):getLength() ) + ( PI ^ 2 )
+        
+        local u = Longitude / ( 2 * PI )
+        local v = Latitude / PI
+        
+        //if v > 1 then v = 150 end
+        
+        return Vector( u, v ) * Scale
+        
+    end
+    
+    function VerticiesToTriangles( Mesh, Triangles, UVScale )
+        
+        local MeshTable = {}
+        
+        for Index, TriangleData in ipairs( Triangles ) do
+                      
+            MeshTable[ Index ] = {}
+            MeshTable[ Index ].pos = Mesh[ TriangleData ].pos
+            
+            local UV = PointOnSphereToUV( MeshTable[ Index ].pos, 3 )
+            
+            MeshTable[ Index ].u = UV.x
+            MeshTable[ Index ].v = UV.y
+            
+        end
+        
+        return MeshTable
+        
+    end
+    
+    function Sphere:initialize()
+        
+        self.Parent = nil
+        self.RenderPoints = false
+        
+        self.Fidelity = 16
+        self.Radius = 1
+        
+        self.UVScale = self.Fidelity
+        
+        self.CoroutinePercent = 0.5
+        
+        self.Position = Vector()
+        self.Angles = Angle()
+        self.Parent = nil
+        
+        self.MaximumTriangles = 65536
+        self.MaximumFidelity = math.sqrt( self.MaximumTriangles / 6 )
+        
+        self.LocalUp = Vector( 0, 0, 1 )
+        
+        self.LogProgressInConsole = false
+        
+        self.VerticieThreads = {}
+        self.MeshingThreads = {}
+        
+        self.SideMeshs = {}
+        self.Meshes = {}
+        
+        self.Material = nil
+        
+        self.Holograms = {}
+        
+        self.Sides = {}
+        self.SideNormals = { 
+            Vector( 0, 0, 1 ), 
+            Vector( 0, 0, -1 ), 
+            Vector( 0, 1, 0 ) , 
+            Vector( 0, -1, 0 ) , 
+            Vector( 1, 0, 0 ) , 
+            Vector( -1, 0, 0 ) 
+        }
+        
+        self.SetupComplete = false
+        self.VerticiesGenerating = false
+        self.ReadyForMesh = false
+        self.MeshesComplete = false
+        
+    end
+    
+    function Sphere:Setup()
+        
+        if self.Material == nil then
+            
+            self.Material = material.create( "VertexLitGeneric" )
+            self.Material:setInt( "$flags", 0 )
+            self.Material:setInt( "$flags", 0x0010 )
+            
+        end
+        
+        if ( self.Fidelity - 1 ) > self.MaximumFidelity then
+            
+            error( "Fidelity too high, highest Fidelity is " .. math.ceil( self.MaximumFidelity ) )
+            
+        end
+        
+        local Verticies = ( ( self.Fidelity - 1 ) ^ 2 ) * 6
+        
+        if self.LogProgressInConsole == true then printConsole( "Generating mesh with " .. Verticies .. " verticies" ) end
+        
+        self.SetupComplete = true
+        
+    end
+    
+    function Sphere:RenderPoint( RenderPos )
+        
+        local Callback = function( Position )
+            
+            local Data = {}
+            
+            Data.StartPosition = localToWorld( RenderPos, Angle(), self.Parent:getPos() or Vector(), Angle() )
+            
+            return Data
+        
+        end
+        
+        RenderLibrary:NewParticle( Callback )
+        
+    end
+    
+    function Sphere:GetPointOnSphere( Point )
+        
+        // Normalizes the point onto the sphere and seperates each point so they all have the same distance from eachother
+        
+        local x2 = Point.x ^ 2
+        local y2 = Point.y ^ 2
+        local z2 = Point.z ^ 2
+        local x = Point.x * math.sqrt( 1 - ( y2 + z2 ) / 2 + ( y2 * z2 ) / 3 )
+        local y = Point.y * math.sqrt( 1 - ( z2 + x2 ) / 2 + ( z2 * x2 ) / 3 )
+        local z = Point.z * math.sqrt( 1 - ( x2 + y2 ) / 2 + ( x2 * y2 ) / 3 )
+        
+        return Vector( x, y, z ) * self.Radius
+        
+    end
+    
+    function Sphere:GetSidePoints( Side, Callback, IsMesh )
+        
+        if not self.SetupComplete then error( "Setup hasn't been completed" ) end
+        
+        local HookName = table.address( self ) .. ":VerticieGenerate:Side:"..Side 
+        
+        if self.VerticiesGenerating == false then self.VerticiesGenerating = true end
+        
+        hook.add( "tick", HookName, function()
+            
+            if not self.VerticieThreads[Side] then
+                
+                self.VerticieThreads[Side] = coroutine.create( function()
+                    
+                    local Verticies = {}
+                    local Triangles = {}
+                    
+                    local Direction = self.SideNormals[ Side ]
+                    
+                    local AxisA = Vector( Direction.y, Direction.z, Direction.x )
+                    local AxisB = Direction:cross( AxisA )
+                    
+                    local Start = 1
+                    local Sub = 0
+                    if IsMesh then Start = 0 Sub = 1 end
+                    
+                    for X = 0, self.Fidelity - 1 do
+                            
+                        for Y = 0, self.Fidelity - 1 do
+                            
+                            if quotaAverage() > quotaMax() * self.CoroutinePercent then coroutine.yield() end
+                            
+                            local Iter = X + Y * self.Fidelity
+                            
+                            Percent = Vector( X, Y ) / ( self.Fidelity - 1 )
+                            
+                            local PointOnUnitCube = Direction + ( Percent.x - 0.5 ) * 2 * AxisA  + ( Percent.y - 0.5 ) * 2 * AxisB
+                            
+                            local PointOnUnitSphere = self:GetPointOnSphere( PointOnUnitCube )
+                            
+                            local FinalPoint = Callback( PointOnUnitSphere ) or PointOnUnitSphere
+                            
+                            if self.RenderPoints == true then self:RenderPoint( FinalPoint ) end
+                            
+                            if IsMesh then
+                                
+                                Verticies[ Iter ] = {}
+                                Verticies[ Iter ].pos = FinalPoint
+                                
+                                if X != self.Fidelity - 1 and Y != self.Fidelity - 1 then
+                                    
+                                    local TriIndex = table.count( Triangles )
+                                    
+                                    Triangles[ TriIndex + 1 ] = Iter + self.Fidelity + 1
+                                    Triangles[ TriIndex + 2 ] = Iter
+                                    Triangles[ TriIndex + 3 ] = Iter + self.Fidelity
+                                    
+                                    Triangles[ TriIndex + 4 ] = Iter + self.Fidelity + 1
+                                    Triangles[ TriIndex + 5 ] = Iter + 1
+                                    Triangles[ TriIndex + 6 ] = Iter
+                                    
+                                end
+                                
+                            end
+                            
+                        end
+                        
+                    end
+                    
+                    if IsMesh then
+                        
+                        self.SideMeshs[ Side ] = { Verticies, Triangles }
+                        
+                    end
+                    
+                end)
+                
+            else
+                
+                if coroutine.status( self.VerticieThreads[Side] ) == "suspended" and quotaAverage() < quotaMax() * self.CoroutinePercent then
+                    coroutine.resume( self.VerticieThreads[Side] )
+                end
+                
+                if coroutine.status( self.VerticieThreads[Side] )=="dead" then
+                    
+                    hook.remove( "tick", HookName )
+                    self.VerticieThreads[Side] = nil
+                    
+                    local ThreadsLeft = table.count( self.VerticieThreads )
+                    
+                    if self.LogProgressInConsole == true then printConsole( "Sphere mesh side: " .. Side .. " has been completed" ) end
+                    if self.LogProgressInConsole == true then printConsole( ThreadsLeft .. " verticie threads are left" ) end
+                    
+                    if ThreadsLeft == 0 then
+                        
+                        self.VerticiesGenerating = false
+                        self.ReadyForMesh = true
+                        
+                    end
+                    
+                end
+                
+            end
+            
+        end)
+        
+    end
+    
+    function Sphere:GetPointsOnSphere( Callback )
+        
+        for Side = 1, 6 do
+            
+            // Create 6 sides of a cube
+            
+            self:GetSidePoints( Side, Callback, self.IsMesh )
+            
+        end
+        
+    end
+    
+    function Sphere:GenerateMesh()
+        
+        if self.VerticiesGenerating == false then error( "Mesh has not been created! Try Sphere:GetPointsOnSphere( function( Position ) end, true )" ) end
+        if self.IsMesh == false then error( "Points haven't been specified as mesh, Sphere.IsMesh should be true" ) end
+        
+        local TimerName = table.address( self )..":__AwaitMeshCompletion"
+        
+        timer.create( TimerName, 0.5, 0, function()
+            
+            if not self.ReadyForMesh then return end
+            timer.remove( TimerName )
+            
+            if self.LogProgressInConsole == true then printConsole( "Mesh completed : Beginning generation" ) end
+            
+            for Side = 1, 6 do
+                
+                local HookName = table.address( self ) .. ":__MeshGeneration:Side:"..Side
+                
+                hook.add( "tick", HookName, function()
+                    
+                    if not self.MeshingThreads[ Side ] then
+                        
+                        self.MeshingThreads[ Side ] = coroutine.create( function()
+                            
+                            if quotaAverage() > quotaMax() * self.CoroutinePercent then coroutine.yield() end
+                            
+                            if not self.SideMeshs[ Side ] then return end
+                            
+                            local Mesh = self.SideMeshs[ Side ]
+                            
+                            local Verticies = VerticiesToTriangles( Mesh[1], Mesh[2], self.UVScale )
+                            
+                            mesh.generateNormals( table.reverse( Verticies ) )
+                    
+                            self.Meshes[ Side ] = mesh.createFromTable( Verticies, true )
+                            
+                        end)
+                            
+                    else
+                        
+                        if coroutine.status( self.MeshingThreads[Side] ) == "suspended" and quotaAverage() < quotaMax() * self.CoroutinePercent then
+                            coroutine.resume( self.MeshingThreads[Side] )
+                        end
+                        
+                        if coroutine.status( self.MeshingThreads[Side] )=="dead" then
+                            
+                            hook.remove( "tick", HookName )
+                            self.MeshingThreads[Side] = nil
+                            
+                            local ThreadsLeft = table.count( self.MeshingThreads )
+                            
+                            if self.LogProgressInConsole == true then printConsole( "Mesh generated for side : " .. Side ) end
+                            if self.LogProgressInConsole == true then printConsole( ThreadsLeft .. " mesh threads are left" ) end
+                            
+                            if ThreadsLeft == 0 then
+                                
+                                if self.LogProgressInConsole == true then printConsole( "Mesh completed, ready for hologram creation!" ) end
+                                
+                                self.MeshesComplete = true
+                                self.ReadyForMesh = false
+                                
+                            end
+                            
+                        end
+                        
+                    end
+                    
+                end)
+                
+            end
+            
+        end)
+        
+    end
+    
+    function Sphere:NewHologram( Side, Callback )
+        
+        self.Holograms[ Side ] = hologram.create( self.Position, self.Angles or self.Parent:getAngles(), "models/props_combine/breenglobe.mdl", Vector( 1 ) )
+        self.Holograms[ Side ]:setParent( self.Parent )
+        
+        //if self.Data.Material != nil then self.SideMaterials[ I ]:setTexture( "$basetexture", self.Data.Material ) end
+        
+        self.Holograms[ Side ]:setMesh( self.Meshes[ Side ] )
+        self.Holograms[ Side ]:setMeshMaterial( self.Material )
+        
+        Callback( self.Holograms[ Side ], Side )
+        
+    end
+    
+    function Sphere:GenerateMeshHolograms( Callback )
+        
+        local TimerName = table.address( self ) .. ":__GenerateMeshHologramsAwait"
+        
+        timer.create( TimerName, 0.5, 0, function()
+            
+            if not self.MeshesComplete then return end
+            timer.remove( TimerName )
+            
+            if self.LogProgressInConsole == true then printConsole( "Beginning hologram creation" ) end
+            
+            for Side = 1, 6 do
+                
+                self:NewHologram( Side, Callback )
+                
+            end
+            
+            
+        end)
+        
+    end
+    
+    local TestSphere = Sphere()
+    
+    TestSphere.Parent = chip()
+    TestSphere.RenderPoints = false
+    
+    TestSphere.Fidelity = 32
+    TestSphere.Radius = 16
+    TestSphere.UVScale = 2
+    
+    TestSphere.LogProgressInConsole = true
+    
+    TestSphere.Material = material.load( "phoenix_storms/ps_grass" )
+    
+    TestSphere:Setup()
+    TestSphere.IsMesh = true
+    
+    TestSphere:GetPointsOnSphere( function( Position )
+        
+        //return Position * math.rand( 1, 15 )
+        
+    end)
+    
+    TestSphere:GenerateMesh()
+    TestSphere:GenerateMeshHolograms( function( Hologram, Side )
+        
+        // Can do something to the holograms here
+        
+        Hologram:setPos( chip():getPos() )
+        Hologram:setParent( chip() )
+        
+        hook.add( "KeyPress", "", function( Player, Key )
+            
+            if Player != owner() then return end
+            if Key != 32 then return end
+            
+            local Direction = Player:getEyeAngles():getForward()
+            
+            print( PointOnSphereToUV( Direction, 1 ) )
+            
+        end)
+            
+    end)
+    
+else
+    
+    
+    
+end
