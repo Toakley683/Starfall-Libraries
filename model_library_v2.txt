@@ -173,32 +173,3 @@ function Model:Compile( Callback )
     end)
     
 end
-
-local Model = Model()
-
-Model:ModelURL( "https://raw.githubusercontent.com/Toakley683/Starfall-JojoStand/main/resources/models/BarneyArm.obj" )
-
-Model:SetShader( "VertexLitGeneric" )
-Model:RegisterTextureURL( "TestTexture", "$basetexture", "https://raw.githubusercontent.com/Toakley683/Starfall-Mech/main/resources/textures/main_texture.png" )
-
-Model:KeyApplyTexture( "barney_barney_reference.smd", "TestTexture" )
-
-Model:Compile( function( MeshList, Textures )
-    
-    Model:RenderHolograms( MeshList, function( Holograms )
-        
-        // This gets called once after it's all complete
-        
-        
-    end,
-    function( Key, Hologram, Texture )
-        
-        // This gets called for EACH hologram made from the meshes
-        
-        Hologram:setScale( Vector( 85 ) )
-        
-    end) // This will render all of the meshes as holograms (Assigns materials too ^^)
-    
-    //printTable( MeshList )
-    
-end)
