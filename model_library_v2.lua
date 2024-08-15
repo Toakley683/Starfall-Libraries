@@ -27,6 +27,8 @@ function Model:initialize()
     self.Textures = {}
     self.ModelTextureIndex = {}
     
+    self.RenderBoundMins, self.RenderBoundMaxs = Vector( -16 ), Vector( 16 )
+    
     self.CourotinePercent = 0.5
     
     self.MeshList = {}
@@ -35,6 +37,7 @@ function Model:initialize()
     
 end
 
+function Model:SetRenderBounds( Mins, Maxs ) self.RenderBoundMins, self.RenderBoundMaxs = Mins, Maxs end
 function Model:SetShader( Shader ) self.Shader = Shader end
 
 function Model:RegisterTextureURL( Name, Key, URL, CB, Done )
@@ -60,8 +63,6 @@ function Model:__LoadTexture( Index )
     if not self.TexturesInit[ Index ] then table.remove( self.TexturesInit, Index ) return end
     
     local Data = self.TexturesInit[ Index ]
-    
-    print( Data.Key )
     
     if 
         self.Textures[ Data.Name ] != nil and
@@ -155,6 +156,8 @@ function Model:RenderHolograms( Meshes, Done, HologramSet )
         Texture = self.Textures[ self.ModelTextureIndex[ E.Key ] ]
         
         HologramSet( E.Key, E, Texture )
+        
+        E:setRenderBounds( self.RenderBoundMins, self.RenderBoundMaxs )
         
         E:setMesh( Mesh )
         if Texture then E:setMeshMaterial( Texture ) end
