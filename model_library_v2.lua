@@ -46,6 +46,8 @@ function Model:RegisterTextureURL( Name, Key, URL, CB, Done )
     
 end
 
+function Model:RegisterTexture( Name, Material ) self.Textures[ Name ] = Material end
+
 function Model:KeyApplyTexture( MeshKey, TextureName )
     
     self.ModelTextureIndex[ MeshKey ] = TextureName
@@ -63,6 +65,8 @@ function Model:__LoadTexture( Index )
     if not self.TexturesInit[ Index ] then table.remove( self.TexturesInit, Index ) return end
     
     local Data = self.TexturesInit[ Index ]
+    
+    // TextureURL Request :
     
     if 
         self.Textures[ Data.Name ] != nil and
