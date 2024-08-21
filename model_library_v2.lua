@@ -29,7 +29,7 @@ function Model:initialize()
     
     self.RenderBoundMins, self.RenderBoundMaxs = Vector( -16 ), Vector( 16 )
     
-    self.CourotinePercent = 0.5
+    self.CourotinePercent = 0.7
     
     self.MeshList = {}
     
@@ -104,7 +104,7 @@ function Model:__RenderModel( OnComplete )
             
             http.get( self.URL, function( MeshData )
                 
-                mesh_thread = coroutine.wrap( function()
+                local mesh_thread = coroutine.wrap( function()
                     
                     local MeshObjects = mesh.createFromObj( MeshData, true, false )
                     local ValuesKeyValues = table.getKeys( MeshObjects )
@@ -126,7 +126,7 @@ function Model:__RenderModel( OnComplete )
                 hook.add( "think", HookName, function()
                     
                     while quotaAverage() < quotaMax() * self.CourotinePercent do
-                
+                        
                         if mesh_thread() then
                             
                             OnComplete()
@@ -181,6 +181,8 @@ function Model:Compile( Callback )
     self.TimerName = ( table.address( self ) .. ":ModelTimer" )
     
     timer.create( self.TimerName, 0.1, 0, function()
+        
+        if http.canRequest() != true then return end
         
         if #self.TexturesInit <= 0 then
             
