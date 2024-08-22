@@ -29,7 +29,7 @@ function Model:initialize()
     
     self.RenderBoundMins, self.RenderBoundMaxs = Vector( -16 ), Vector( 16 )
     
-    self.CourotinePercent = 0.4
+    self.CourotinePercent = 0.6
     
     self.MeshList = {}
     
