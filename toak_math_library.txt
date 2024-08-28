@@ -3,6 +3,7 @@
 --@shared
 
 local Entity = getMethods( "Entity" )
+local PhysObj = getMethods( "PhysObj" )
 
 local sin = math.sin
 local cos = math.sin
@@ -26,6 +27,8 @@ function Entity:worldToLocalAxis( Axis )
     
 end
 
+function absVector( Vec ) return Vector( math.abs( Vec.x ), math.abs( Vec.y ), math.abs( Vec.z ) ) end
+
 if SERVER then
     
     function Entity:applyForceAngle( DesiredAngle, Mul )
@@ -38,7 +41,7 @@ if SERVER then
         local Torque = self:worldToLocalAxis( Quaternion )
         local AngVel = self:worldToLocalAxis( self:getAngleVelocity() )
         
-        self:setAngleVelocity( Torque * Mul * game.getTickInterval() )
+        self:addAngleVelocity( ( ( Torque * Mul ) - AngVel ) * game.getTickInterval() )
         
     end
     
