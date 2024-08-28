@@ -32,17 +32,17 @@ function absVector( Vec ) return Vector( math.abs( Vec.x ), math.abs( Vec.y ), m
 if SERVER then
     
     function Entity:applyForceAngle( DesiredAngle, Mul )
-        
+
         if not self then return end
         if not self:isValid() then return end
         if not self:isValidPhys() then return end
-        
+
         local Quaternion = ( DesiredAngle:getQuaternion() / self:getAngles():getQuaternion() ):getRotationVector()
         local Torque = self:worldToLocalAxis( Quaternion )
         local AngVel = self:worldToLocalAxis( self:getAngleVelocity() )
-        
-        self:addAngleVelocity( ( ( Torque * Mul ) - AngVel ) * game.getTickInterval() )
-        
+
+        self:setAngleVelocity( Torque * Mul * game.getTickInterval() )
+
     end
     
     function Entity:SetPosForce( DesiredPosition, Mul, NoGravity )
