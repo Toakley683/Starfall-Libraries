@@ -39,8 +39,6 @@ if CLIENT then
         
         self.LastFrameCurtime = 0
         
-        self.Camera:setNoDraw( !Data.Draw )
-        
         self.ScrW, self.ScrH = render.getResolution()
         
         self.RTName = ( table.address( self ) .. ":ScreenMat" )
@@ -64,8 +62,10 @@ if CLIENT then
             
             if render.getScreenEntity() != self.Screen then return end
             
+            local ResX, ResY = render.getResolution()
+            
             render.setColor( Color( 118, 68, 171 ) )
-            render.drawRect( 0, 0, 512, 512 )
+            render.drawRect( 0, 0, ResX, ResY )
             
             render.pushViewMatrix( { type = "2D" } )
             render.setMaterial( self.ScreenMaterial )
@@ -244,6 +244,13 @@ else
     function Camera:setCamera( Position, Angle, Parent )
         
         self.Camera = prop.create( Position, Angle, "models/hunter/plates/plate.mdl", true )
+        
+        if self.Draw != true then
+            
+            self.Camera:setColor( Color( 255, 255, 255, 0 ) )
+            
+        end
+        
         if Parent then self.Camera:setParent( Parent ) end
         
         self:CheckRequirements()
@@ -276,7 +283,7 @@ else
         
         local OnScreenLocal = self.Camera:worldToLocal( OnScreenOrigin )
         
-        local MaxUnits = render.getResolution() / 2
+        local MaxUnits = Vector( 512 ) / 2
         
         if math.abs( OnScreenLocal.x ) > MaxUnits.y then return end
         if math.abs( OnScreenLocal.y ) > MaxUnits.x then return end
@@ -292,13 +299,9 @@ else
     
     function Camera:setScreen( Position, Angle, Model, Parent )
         
-        self.ScreenCollisions = prop.create( Position, Angle, "models/hunter/plates/plate1x1.mdl", true )
-        self.ScreenCollisions:setNoDraw( true )
-        
         self.Screen = prop.createComponent( Position, Angle, "starfall_screen", Model, true )
         self.Screen:setColor( Color( 255, 255, 255, 1 ) )
         self.Screen:linkComponent( chip() )
-        self.Screen:setParent( self.ScreenCollisions )
         
         if Parent then self.ScreenCollisions:setParent( Parent ) end
         
