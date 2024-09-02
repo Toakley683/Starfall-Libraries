@@ -37,16 +37,6 @@ if CLIENT then
         self.FPS = self.Data.FPS
         self.FPSDelta = 1 / self.FPS
         
-        self.Dimensions = self.Data.Dimensions
-        
-        render.setScreenDimensions(
-            self.Screen,
-            0,
-            0,
-            self.Dimensions.x,
-            self.Dimensions.y
-        )
-        
         self.LastFrameCurtime = 0
         
         self.Camera:setNoDraw( !Data.Draw )
@@ -244,8 +234,6 @@ else
         self.SendData[ "ScreenProp" ] = self.Screen
         self.SendData[ "ScreenIndex" ] = self.Screen:entIndex()
         
-        self.SendData[ "Dimensions" ] = self.Dimensions
-        
         self.SendData[ "FPS" ] = self.FPS
         self.SendData[ "Draw" ] = self.Draw
         
@@ -288,7 +276,7 @@ else
         
         local OnScreenLocal = self.Camera:worldToLocal( OnScreenOrigin )
         
-        local MaxUnits = self.SendData[ "Dimensions" ] / 2
+        local MaxUnits = render.getResolution() / 2
         
         if math.abs( OnScreenLocal.x ) > MaxUnits.y then return end
         if math.abs( OnScreenLocal.y ) > MaxUnits.x then return end
@@ -302,14 +290,12 @@ else
         
     end
     
-    function Camera:setScreen( Position, Angle, Dimensions, Parent )
-        
-        self.Dimensions = Dimensions
+    function Camera:setScreen( Position, Angle, Model, Parent )
         
         self.ScreenCollisions = prop.create( Position, Angle, "models/hunter/plates/plate1x1.mdl", true )
         self.ScreenCollisions:setNoDraw( true )
         
-        self.Screen = prop.createComponent( Position, Angle, "starfall_screen", "models/bull/dynamicbuttonsf.mdl", true )
+        self.Screen = prop.createComponent( Position, Angle, "starfall_screen", Model, true )
         self.Screen:setColor( Color( 255, 255, 255, 1 ) )
         self.Screen:linkComponent( chip() )
         self.Screen:setParent( self.ScreenCollisions )
