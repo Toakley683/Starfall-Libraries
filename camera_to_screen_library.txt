@@ -34,6 +34,8 @@ if CLIENT then
         
         self.Data = Data
         
+        self.RenderDistance = Data.RenderDistance
+        
         self.FPS = self.Data.FPS
         self.FPSDelta = 1 / self.FPS
         
@@ -67,6 +69,8 @@ if CLIENT then
             render.setColor( Color( 118, 68, 171 ) )
             render.drawRect( 0, 0, ResX, ResY )
             
+            if render.getEyePos():getDistance( self.Screen:getPos() ) > self.RenderDistance then return end
+            
             render.pushViewMatrix( { type = "2D" } )
             render.setMaterial( self.ScreenMaterial )
             render.setColor( Color( 255, 255, 255 ) )
@@ -84,7 +88,13 @@ if CLIENT then
         
         hook.add( "renderscene", self.RTName, function( EyePosition, EyeAngles )
             
+            if not self.Screen then return end
+            if not self.Screen:isValid() then return end
+            
             if cpuAverage() > cpuMax() * 0.8 then return end
+            
+            if EyePosition:getDistance( self.Screen:obbCenterW() ) > self.RenderDistance then self.Screen:setNoDraw( true ) return end
+            self.Screen:setNoDraw( false )
             
             self:__RenderView( EyePosition, EyeAngles )
             
@@ -237,6 +247,8 @@ else
         self.SendData[ "FPS" ] = self.FPS
         self.SendData[ "Draw" ] = self.Draw
         
+        self.SendData[ "RenderDistance" ] = self.RenderDistance
+        
         self.RequirementsMet = true
         
     end
@@ -297,7 +309,11 @@ else
         
     end
     
-    function Camera:setScreen( Position, Angle, Model, Parent )
+    function Camera:setScreen( Position, Angle, Model, Parent, RenderDist )
+        
+        if not RenderDist then RenderDist = 500 end
+        
+        self.RenderDistance = RenderDist
         
         self.Screen = prop.createComponent( Position, Angle, "starfall_screen", Model, true )
         self.Screen:setColor( Color( 255, 255, 255, 1 ) )
