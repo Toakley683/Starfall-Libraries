@@ -191,6 +191,9 @@ function Model:Compile( Callback )
                 Callback( self.MeshList, self.Textures )
                 
             end)
+            
+            self.Compiled = true
+            
             timer.remove( self.TimerName )
             return
             
