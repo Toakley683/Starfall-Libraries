@@ -73,17 +73,6 @@ function Model:__LoadTexture( Index )
         self.Textures[ Data.Name ].Key == Data.Key
     then table.remove( self.TexturesInit, Index ) return end
     
-    if 
-        self.Textures[ Data.Name ] != nil and
-        self.Textures[ Data.Name ].Key != Data.Key
-    then
-        
-        self.Textures[ Data.Name ]:setTextureURL( Data.Key, Data.URL, Data.CB, Data.Done )
-        table.remove( self.TexturesInit, Index )
-        return
-        
-    end
-    
     if not http.canRequest() then return end
     
     local Mat = material.create( Data.Shader )
